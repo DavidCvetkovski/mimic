@@ -10,3 +10,6 @@ macos/build/
 xcuserdata/
 *.xcworkspace/xcshareddata/
 DerivedData/
+
+# Swift package build products
+.build/
