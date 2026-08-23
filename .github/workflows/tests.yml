@@ -35,3 +35,17 @@ jobs:
         # The vendored Audio8 sources are excluded: they are a verbatim copy,
         # and reformatting them would make re-syncing upstream painful.
       - run: ruff check core tests --exclude core/vendor
+
+  macos-app:
+    # The Swift app only builds on a Mac, so it gets a runner of its own. This
+    # compiles the bundle; it does not launch it.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Mimic.app
+        run: ./macos/build.sh
+      - name: The bundle is complete
+        run: |
+          test -x macos/build/Mimic.app/Contents/MacOS/Mimic
+          test -f macos/build/Mimic.app/Contents/Info.plist
+          codesign --verify --verbose macos/build/Mimic.app

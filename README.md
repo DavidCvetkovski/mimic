@@ -65,7 +65,7 @@ core/          the engine and its HTTP API — one implementation, every front e
   server.py    the API below
   vendor/      Audio8's ONNX reference implementation, Apache 2.0, verbatim
 web/           the browser app in the screenshot
-macos/         a native shell over the same engine          (not built yet)
+macos/         a native SwiftUI app over the same engine
 ios/           on-device, via ONNX Runtime Mobile           (not built yet)
 tests/         Mimic's own logic — no model needed
 ```
@@ -109,9 +109,19 @@ python3 -m unittest discover -s tests -t .
 21 tests, no framework to install, and no model required — they cover the part
 Mimic adds rather than the vendored runtime, which is upstream's to test.
 
+## The macOS app
+
+```bash
+./macos/build.sh && open macos/build/Mimic.app
+```
+
+Native SwiftUI over the same engine: it records through `AVAudioEngine` rather
+than a browser, and starts `core/server.py` as a child process — attaching to a
+running one first, so it never fights the web app for the port. Five Swift
+files, no Xcode project, see [macos/README.md](macos/README.md).
+
 ## Not built yet
 
-- **macOS app.** A native shell that manages the engine as a subprocess.
 - **iOS, on device.** ONNX Runtime ships iOS builds and `CoreMLExecutionProvider`
   exists, and `runtime_manifest.json` fully specifies the architecture — so the
   work is porting the sampling loop to Swift rather than inventing anything.

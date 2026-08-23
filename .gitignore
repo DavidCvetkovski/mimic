@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 .venv/
 build/
+macos/build/
 *.egg-info/
 
 # macOS / iOS build products
