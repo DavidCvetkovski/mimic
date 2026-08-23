@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -114,7 +115,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         path = self.path.split("?")[0]
         if path.startswith("/api/voices/"):
-            if not self.engine.delete(_name_from(path, tail=0)):
+            if not self.engine.delete(_name_from(path)):
                 return self.fail(404, "no such voice")
             return self.reply(200, {"ok": True, "voices": self.engine.voices()})
         self.fail(404, "not found")
@@ -164,10 +165,17 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200, data, content_type, Cache_Control="no-store")
 
 
-def _name_from(path, tail=1):
-    """The voice name out of /api/voices/<name>[/something]."""
+def _name_from(path):
+    """
+    The voice name out of /api/voices/<name>[/something].
+
+    Unquoted, because a name is allowed spaces and punctuation — "Me, reading"
+    arrives as "Me%2C%20reading", and comparing that against a directory called
+    "Me, reading" fails every time. Names with a space were simply unreachable:
+    404 on the sample, on rename and on delete.
+    """
     parts = [p for p in path.split("/") if p]
-    return parts[2] if len(parts) > 2 else ""
+    return urllib.parse.unquote(parts[2]) if len(parts) > 2 else ""
 
 
 def log(message):

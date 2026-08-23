@@ -31,6 +31,10 @@ CACHE_DIR = HOME / "cache"
 # them go afterwards, so an idle menu bar icon is not also a gigabyte of RAM.
 IDLE_UNLOAD_SECONDS = 600
 
+# Cached audio is small but unbounded, and a long-lived app would accumulate it
+# forever. Trimmed oldest-first once it passes this.
+CACHE_LIMIT_MB = 200
+
 # The reference implementation wants every model file in one flat directory;
 # a Hugging Face snapshot puts the voice-registration encoder in a subfolder.
 REGISTRATION_FILES = ("codec_encoder_fp16.onnx", "codec_encoder_fp16.onnx.data",
@@ -232,7 +236,26 @@ class Engine:
 
         data = to_wav(audio)
         cached.write_bytes(data)
+        _prune_cache()
         return data, len(audio) / SAMPLE_RATE, False
+
+
+def _prune_cache(limit_mb: int = CACHE_LIMIT_MB):
+    """Drop the least recently used audio once the cache outgrows its budget."""
+    try:
+        files = [(p.stat().st_atime, p.stat().st_size, p) for p in CACHE_DIR.glob("*.wav")]
+    except OSError:
+        return
+    total = sum(size for _, size, _ in files)
+    budget = limit_mb * 1024 * 1024
+    for _, size, path in sorted(files):
+        if total <= budget:
+            break
+        try:
+            path.unlink()
+            total -= size
+        except OSError:
+            pass
 
 
 # --------------------------------------------------------------------------

@@ -100,6 +100,17 @@ input[type=text]:focus{border-color:var(--blood-soft)}
 .clock{font-family:var(--mono);font-size:12px;color:var(--muted);min-width:52px}
 .clock.good{color:var(--blood)}
 .note{font-family:var(--sans);font-size:12px;color:var(--muted);line-height:1.7;margin-top:12px}
+details{margin-top:12px}
+summary{
+  font-family:var(--sans);font-size:11.5px;color:var(--muted);cursor:pointer;
+  letter-spacing:.04em;
+}
+summary:hover{color:var(--ink)}
+.nowplaying{
+  font-family:var(--sans);font-size:12px;color:var(--muted);margin-top:8px;
+}
+.nowplaying strong{color:var(--ink);font-weight:600}
+.nowplaying.stale{color:var(--blood)}
 .msg{font-family:var(--sans);font-size:12.5px;padding:13px 16px;margin-top:16px;display:none}
 .msg.on{display:block}
 .msg.bad{color:var(--blood);border:1px solid var(--blood-soft);background:rgba(124,37,41,.06)}
@@ -137,6 +148,7 @@ footer{
   <span class="status" id="status"></span>
 </div>
 <audio id="player" controls></audio>
+<p class="nowplaying" id="nowplaying"></p>
 <div class="msg" id="msg"></div>
 
 <section>
@@ -154,6 +166,10 @@ footer{
   </p>
   <audio id="preview" controls style="margin-bottom:14px"></audio>
   <input type="text" id="name" placeholder="Name this voice — “Me, reading”" autocomplete="off">
+  <details id="saidwrap">
+    <summary>What you actually said</summary>
+    <textarea id="said" spellcheck="false" style="min-height:88px;font-size:16px"></textarea>
+  </details>
   <div class="row">
     <button class="go" id="add" disabled>Save voice</button>
     <span class="status" id="addstatus"></span>
@@ -175,7 +191,13 @@ const SCRIPT = "My name is — and this is my voice. I am reading a short paragr
   + "Bright orange leaves fell through the cold November air, and somewhere "
   + "further down the valley a church bell rang twice.";
 
-let voices = [], chosen = null, lastBlob = null;
+let voices = [], chosen = null;
+
+// What is currently in the player, and what produced it. Keeping the voice and
+// text alongside the audio is not bookkeeping for its own sake: the selection
+// can change after something has been spoken, and naming the download from the
+// *current* selection saved Jadranka's audio in a file called david.wav.
+let current = null;   // {blob, voice, text}
 
 // ---------- the library ----------
 async function loadVoices(){
@@ -196,7 +218,8 @@ function paintVoices(){
   }
   $('#speak').disabled = false;
   box.innerHTML = voices.map(v => `
-    <button class="chip ${v.name === chosen ? 'on' : ''}" data-voice="${esc(v.name)}">
+    <button class="chip ${v.name === chosen ? 'on' : ''}" data-voice="${esc(v.name)}"
+            title="Click to use · double-click to rename">
       ${esc(v.name)}<span class="x" title="Delete">&times;</span>
     </button>`).join('');
 
@@ -207,10 +230,30 @@ function paintVoices(){
         e.stopPropagation();
         if (!confirm(`Delete the voice “${name}”?`)) return;
         await api('/voices/' + encodeURIComponent(name), {method: 'DELETE'});
+        if (current && current.voice === name){
+          current = null;
+          $('#player').classList.remove('on');
+          $('#save').disabled = true;
+          paintNowPlaying();
+        }
         return loadVoices();
       }
       chosen = name;
       paintVoices();
+      paintNowPlaying();
+    };
+    chip.ondblclick = async e => {
+      e.stopPropagation();
+      const next = prompt('Rename this voice', name);
+      if (!next || next.trim() === name) return;
+      const res = await api('/voices/' + encodeURIComponent(name) + '/rename', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: next.trim()})
+      });
+      if (!res.ok) return say('bad', (await res.json()).error || 'could not rename');
+      if (current && current.voice === name) current.voice = next.trim();
+      chosen = next.trim();
+      loadVoices();
     };
   });
 }
@@ -244,12 +287,13 @@ $('#speak').onclick = async () => {
       body: JSON.stringify({text, voice: chosen})
     });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-    lastBlob = await res.blob();
+    current = {blob: await res.blob(), voice: chosen, text};
     const player = $('#player');
-    player.src = URL.createObjectURL(lastBlob);
+    player.src = URL.createObjectURL(current.blob);
     player.classList.add('on');
     player.play().catch(() => {});
     $('#save').disabled = false;
+    paintNowPlaying();
     const spoken = res.headers.get('X-Mimic-Seconds');
     const cached = res.headers.get('X-Mimic-Cached') === '1';
     status.textContent = cached
@@ -265,12 +309,30 @@ $('#speak').onclick = async () => {
 };
 
 $('#save').onclick = () => {
-  if (!lastBlob) return;
+  if (!current) return;
   const link = document.createElement('a');
-  link.href = URL.createObjectURL(lastBlob);
-  link.download = `${chosen || 'mimic'}.wav`;
+  link.href = URL.createObjectURL(current.blob);
+  // Named after the voice that actually spoke it, not whichever chip happens
+  // to be lit right now.
+  link.download = `${slug(current.voice)}.wav`;
   link.click();
 };
+
+// A filename, out of a voice name that may contain anything.
+const slug = name => (String(name || 'mimic')
+  .normalize('NFKD').replace(/[^\w\s-]/g, '').trim()
+  .replace(/[\s_]+/g, '-').toLowerCase()) || 'mimic';
+
+// Say whose voice is in the player. Without this the only clue was the sound
+// itself, which is no help at all when comparing two takes.
+function paintNowPlaying(){
+  const label = $('#nowplaying');
+  if (!current){ label.textContent = ''; return; }
+  const stale = current.voice !== chosen;
+  label.innerHTML = `<strong>${esc(current.voice)}</strong>`
+    + (stale ? ' — not the voice selected above' : '');
+  label.className = 'nowplaying' + (stale ? ' stale' : '');
+}
 
 // ---------- recording ----------
 // Raw PCM through the Web Audio graph and encoded to WAV here, so the server
@@ -356,6 +418,8 @@ $('#add').onclick = async () => {
   const name = $('#name').value.trim();
   if (!recorded) return;
   if (!name) return say('bad', 'Give the voice a name first.');
+  if (voices.some(v => v.name === name)
+      && !confirm(`There is already a voice called “${name}”. Replace it?`)) return;
   const button = $('#add'), status = $('#addstatus');
   button.disabled = true;
   status.textContent = 'registering…';
@@ -363,7 +427,8 @@ $('#add').onclick = async () => {
     const hex = [...recorded].map(b => b.toString(16).padStart(2, '0')).join('');
     const res = await api('/voices', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({name, transcript: SCRIPT, wav_hex: hex})
+      body: JSON.stringify({name, transcript: $('#said').value.trim() || SCRIPT,
+                            wav_hex: hex})
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
@@ -383,8 +448,17 @@ $('#add').onclick = async () => {
   button.disabled = false;
 };
 
+// Cmd-Enter, or Ctrl-Enter, speaks — the same shortcut the macOS app uses.
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !$('#speak').disabled){
+    e.preventDefault();
+    $('#speak').click();
+  }
+});
+
 // ---------- go ----------
 $('#script').textContent = SCRIPT;
+$('#said').value = SCRIPT;
 $('#preview').style.display = 'none';
 loadVoices();
 </script>

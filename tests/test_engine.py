@@ -195,3 +195,38 @@ class WavWriting(TempHome):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CachePruning(TempHome):
+    """Cached audio is bounded, or a long-lived install grows without limit."""
+
+    def files(self, count, size=1024):
+        import time
+        self.engine_module.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        made = []
+        for n in range(count):
+            path = self.engine_module.CACHE_DIR / f"voice-{n:03d}.wav"
+            path.write_bytes(b"x" * size)
+            # Distinct access times, so "oldest" is well defined.
+            os.utime(path, (time.time() - (count - n) * 60,) * 2)
+            made.append(path)
+        return made
+
+    def test_a_cache_within_budget_is_left_alone(self):
+        made = self.files(5)
+        self.engine_module._prune_cache(limit_mb=10)
+        self.assertTrue(all(p.exists() for p in made))
+
+    def test_the_oldest_go_first(self):
+        made = self.files(10, size=200_000)          # ~2 MB total
+        self.engine_module._prune_cache(limit_mb=1)  # keep about half
+        surviving = [p for p in made if p.exists()]
+        self.assertTrue(surviving, "pruning must not empty the cache entirely")
+        self.assertLess(len(surviving), len(made))
+        # Whatever survived must be newer than whatever did not.
+        self.assertTrue(all(p.exists() for p in made[-len(surviving):]))
+
+    def test_pruning_an_absent_cache_is_not_an_error(self):
+        import shutil
+        shutil.rmtree(self.engine_module.CACHE_DIR, ignore_errors=True)
+        self.engine_module._prune_cache()
