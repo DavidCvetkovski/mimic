@@ -1,0 +1,6 @@
+line-length = 96
+target-version = "py311"
+extend-exclude = ["core/vendor"]   # a verbatim copy; see core/vendor/arktts/UPSTREAM.md
+
+[lint]
+select = ["E", "F", "W", "B", "UP", "C4", "SIM"]

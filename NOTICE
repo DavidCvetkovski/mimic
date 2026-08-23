@@ -1,0 +1,41 @@
+Mimic
+Copyright (c) 2026 David Cvetkovski
+
+Mimic's own source is MIT licensed (see LICENSE). It includes and depends on
+work by others, listed here.
+
+-------------------------------------------------------------------------------
+Audio8 TTS — ONNX Runtime reference implementation
+-------------------------------------------------------------------------------
+
+Files under core/vendor/arktts/ are copied unmodified from:
+
+    https://github.com/Audio8-AI/Audio8_TTS
+    onnx_runtime/arktts_runtime/
+    commit 421f71559848572431bd6229af3e1a73f25986a7
+
+Licensed under the Apache License, Version 2.0. The full licence text is kept
+alongside those files at core/vendor/arktts/LICENSE, and the provenance of the
+copy is recorded in core/vendor/arktts/UPSTREAM.md.
+
+From the upstream NOTICE file:
+
+    audio8_tts
+
+    The model architecture is inspired by the DualAR design used in Fish Audio
+    S2 Pro.
+
+-------------------------------------------------------------------------------
+Model weights
+-------------------------------------------------------------------------------
+
+No model weights are distributed in this repository. On first run Mimic
+downloads:
+
+    Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4
+
+from Hugging Face, published under the Apache License, Version 2.0.
+
+Note that the PyTorch base models in the same family (Audio8-TTS-Preview-0.1b
+and -0.6b) are released under the Audio8 Community License, which is a
+different and more restrictive licence. Mimic uses the ONNX release only.

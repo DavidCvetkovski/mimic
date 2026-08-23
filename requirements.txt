@@ -1,0 +1,8 @@
+# The engine. No PyTorch: inference runs on ONNX Runtime's CPU provider, which
+# is what makes the whole thing about a gigabyte instead of four.
+numpy>=2.0
+onnxruntime>=1.20
+soundfile>=0.12
+tokenizers>=0.20        # upstream's requirements.txt omits this one
+scipy>=1.11
+huggingface_hub>=0.26   # first-run download only

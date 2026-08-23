@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # Mimic's own logic is pure standard library and does not need the model,
+    # so the suite runs anywhere Python does — no ONNX Runtime, no 968 MiB
+    # download, no macOS.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m unittest discover -s tests -t . -v
+      - run: python -m compileall -q core tests
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --quiet ruff
+        # The vendored Audio8 sources are excluded: they are a verbatim copy,
+        # and reformatting them would make re-syncing upstream painful.
+      - run: ruff check core tests --exclude core/vendor
