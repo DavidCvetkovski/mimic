@@ -68,6 +68,34 @@ Measured on an M5, and on an iPhone 17 Pro simulator:
 Saying the same thing twice is free: synthesis is deterministic for a given
 seed, so results are cached by voice and text.
 
+## Something to say
+
+Most people open a text-to-speech app with nothing prepared, and a blank box is
+a bad first impression. The iPhone app opens with six passages to tap — Hamlet,
+Armstrong on the moon, Austen, Poe, Dickens — and a **Write me one** button that
+asks Apple's on-device model for whatever you describe: a birthday toast, a
+limerick about a late cat. It ships with the system, so there is nothing to
+download and nothing to host, and the prompt never leaves the phone, which is
+the same promise the rest of this makes.
+
+The presets are all public domain. Song lyrics and film dialogue are the obvious
+crowd pleasers and both are still in copyright — shipping them inside an app is
+not the same as humming them in the shower.
+
+## Waiting for it
+
+Generating is slower than listening, so there is always a wait before the first
+sound, and the app is mostly honest arithmetic about that wait. It knows roughly
+how long a passage will take to say (about 65 milliseconds a character), it
+renders a sentence at a time, and it starts playing at the earliest moment the
+queue provably cannot run dry: bank *B* seconds of a *T*-second passage at rate
+*r*, and playback is safe once *B ≥ T(r−1)/r*.
+
+Run backwards, that same arithmetic is the countdown you see before anything
+plays — using the rate this particular phone managed last time, remembered
+between launches. It is deliberately vague, because it will be wrong: "playing
+in about 20 seconds", never a ticking clock.
+
 ## It starts speaking before it has finished thinking
 
 Generation runs slower than real time, so waiting for a whole paragraph means
