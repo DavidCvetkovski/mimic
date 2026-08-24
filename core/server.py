@@ -21,6 +21,7 @@ looking at the same engine.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import time
@@ -84,6 +85,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health":
             return self.reply(200, {
                 "ok": True,
+                "streaming": True,
                 "model_ready": core.model_ready(),
                 "model_loaded": self.engine.loaded,
                 "voices": len(self.engine.voices()),
@@ -118,6 +120,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, {"ok": True, "voices": self.engine.voices()})
         if path == "/api/speak":
             return self.speak(payload)
+        if path == "/api/speak/stream":
+            return self.speak_stream(payload)
         self.fail(404, "not found")
 
     def do_DELETE(self):
@@ -163,6 +167,74 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200, data, "audio/wav",
                    X_Mimic_Cached="1" if cached else "0",
                    X_Mimic_Seconds=f"{seconds:.2f}")
+
+    def speak_stream(self, payload):
+        """
+        Stream the audio a sentence at a time, as newline-delimited JSON.
+
+        One object per line, so a browser reads it with a plain fetch reader and
+        no framing of its own. The opening line carries the length estimate; each
+        chunk carries how fast generation is actually running, which is what lets
+        the page decide when it has buffered enough to play without catching up.
+        """
+        import base64
+
+        import numpy as np
+
+        text = payload.get("text", "")
+        voice = payload.get("voice", "")
+        try:
+            seed = int(payload.get("seed", 42))
+        except (TypeError, ValueError):
+            seed = 42
+
+        try:
+            stream = self.engine.speak_stream(text=text, voice=voice, seed=seed)
+        except core.ModelMissing as exc:
+            return self.fail(503, str(exc))
+        except ValueError as exc:
+            return self.fail(400, str(exc))
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        def line(event):
+            self.wfile.write((json.dumps(event) + "\n").encode())
+            self.wfile.flush()
+
+        started = time.time()
+        try:
+            line({"type": "start",
+                  "estimate": round(self.engine.estimate(text), 2),
+                  "sentences": len(core.split_sentences(" ".join(text.split()))),
+                  "sample_rate": core.SAMPLE_RATE})
+            for event in stream:
+                if event["done"]:
+                    line({"type": "done",
+                          "seconds": round(event["seconds"], 2),
+                          "cached": event["cached"],
+                          "elapsed": round(time.time() - started, 2),
+                          # A cache hit produced no chunks, so hand the whole
+                          # thing over rather than leaving the page silent.
+                          "wav": base64.b64encode(event["wav"]).decode()
+                                 if event["cached"] else None})
+                    break
+                pcm = (np.clip(event["samples"], -1, 1) * 32767).astype("<i2")
+                line({"type": "chunk",
+                      "index": event["index"], "of": event["of"],
+                      "seconds": round(event["seconds"], 3),
+                      "rtf": round(event["rtf"], 3),
+                      "pcm": base64.b64encode(pcm.tobytes()).decode()})
+        except (BrokenPipeError, ConnectionResetError):
+            # Navigated away, or Stop was pressed. Closing the generator
+            # releases the engine lock; there is nothing else to undo.
+            stream.close()
+        except Exception as exc:                              # noqa: BLE001
+            with contextlib.suppress(OSError):
+                line({"type": "error", "message": str(exc)})
 
     def send_web(self, name, content_type):
         try:

@@ -18,6 +18,7 @@ struct SpeakView: View {
                     field
                     voicePicker
                     speakButton
+                    if store.isSpeaking || store.player.buffered > 0 { transport }
 
                     if let problem = store.problem {
                         Label(problem, systemImage: "exclamationmark.triangle")
@@ -96,27 +97,74 @@ struct SpeakView: View {
     }
 
     private var speakButton: some View {
-        HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             Button {
                 writing = false
-                Task { await store.speak() }
+                store.isSpeaking ? store.stopSpeaking() : store.speak()
             } label: {
-                Text(store.isSpeaking ? "Speaking…" : "Speak it")
+                Text(store.isSpeaking ? "Stop" : "Speak it")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .tint(store.isSpeaking ? Color.secondary : Palette.blood)
             .controlSize(.large)
-            .disabled(store.isSpeaking || store.selected == nil
-                      || store.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(!store.isSpeaking
+                      && (store.selected == nil
+                          || store.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
 
-            if store.isSpeaking {
-                VStack(alignment: .leading, spacing: 2) {
-                    ProgressView().controlSize(.small)
-                    Text(store.progress).font(.caption2).foregroundStyle(.secondary)
-                }
-                .frame(width: 96, alignment: .leading)
+            if !store.progress.isEmpty {
+                Text(store.progress).font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// How much exists, and how much has been heard — genuinely two numbers
+    /// while the rest is still being made.
+    private var transport: some View {
+        HStack(spacing: 12) {
+            Button {
+                store.player.isPlaying ? store.player.pause() : store.player.play()
+            } label: {
+                Image(systemName: store.player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(width: 32, height: 32)
+                    .background(Palette.blood, in: Circle())
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .disabled(store.player.buffered == 0)
+
+            GeometryReader { geometry in
+                let total = max(store.player.buffered, store.estimate, 0.1)
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.quaternary)
+                    Capsule().fill(Palette.blood).opacity(0.28)
+                        .frame(width: geometry.size.width
+                               * min(1, store.player.buffered / total))
+                    Capsule().fill(Palette.blood)
+                        .frame(width: geometry.size.width
+                               * min(1, store.player.position / total))
+                }
+            }
+            .frame(height: 5)
+
+            Text(clockLabel)
+                .font(.system(.caption, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(width: 88, alignment: .trailing)
+        }
+        .padding(.top, 4)
+    }
+
+    private var clockLabel: String {
+        func mmss(_ seconds: Double) -> String {
+            let whole = max(0, Int(seconds.rounded()))
+            return String(format: "%d:%02d", whole / 60, whole % 60)
+        }
+        return store.isSpeaking
+            ? "\(mmss(store.player.position)) / ~\(mmss(store.estimate))"
+            : "\(mmss(store.player.position)) / \(mmss(store.player.buffered))"
     }
 }
 

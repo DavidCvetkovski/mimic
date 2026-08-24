@@ -181,6 +181,101 @@ public final class Runtime {
                                     options: options, onFrame: onFrame))
     }
 
+    /// One sentence's worth of finished audio.
+    public struct Chunk: Sendable {
+        public let samples: [Float]
+        public let index: Int
+        public let of: Int
+        /// Seconds of audio produced so far, across every chunk.
+        public let seconds: Double
+        /// How much slower than real time generation is running, so far.
+        public let realtimeFactor: Double
+    }
+
+    /// Render a sentence at a time, handing each back as it is finished.
+    ///
+    /// Generation is slower than real time, so waiting for a whole paragraph
+    /// means waiting longer than it takes to say. A sentence at a time turns
+    /// that into a short wait and then continuous sound — and unlike the codec's
+    /// own chunked decoder, which re-decodes a rolling window and costs about
+    /// twice the throughput, each sentence here is a clean one-shot render.
+    ///
+    /// Return false from `onChunk` to stop.
+    public func synthesizeStream(text: String, voice: String,
+                                 options: Options = Options(),
+                                 onChunk: (Chunk) -> Bool) throws {
+        let parts = Runtime.split(text)
+        let began = Date()
+        var seconds = 0.0
+
+        for (index, part) in parts.enumerated() {
+            var samples = try synthesize(text: part, voice: voice, options: options)
+            // A breath between sentences, or they run together.
+            if index < parts.count - 1 {
+                samples.append(contentsOf:
+                    [Float](repeating: 0, count: Int(Double(manifest.sampleRate) * 0.18)))
+            }
+            seconds += Double(samples.count) / Double(manifest.sampleRate)
+            let elapsed = Date().timeIntervalSince(began)
+            let carryOn = onChunk(Chunk(samples: samples, index: index, of: parts.count,
+                                        seconds: seconds,
+                                        realtimeFactor: elapsed / max(seconds, 0.01)))
+            if !carryOn { return }
+        }
+    }
+
+    /// Roughly how many seconds of speech some text will make.
+    ///
+    /// Fitted against measured output: worst case about 1.3s out over a
+    /// twenty-second line, which is accurate enough to size a progress bar and
+    /// to decide when it is safe to start playing.
+    public static func estimate(_ text: String) -> Double {
+        let length = text.split(whereSeparator: \.isWhitespace).joined(separator: " ").count
+        return max(0.3, 0.0647 * Double(length) + 0.089)
+    }
+
+    /// Break a passage where a speaker would pause.
+    ///
+    /// Short enough that the first piece is ready quickly, long enough that the
+    /// model still has a phrase to work with — it uses the whole chunk for
+    /// prosody, so splitting per clause makes the result sound clipped.
+    static func split(_ text: String, limit: Int = 110) -> [String] {
+        let flattened = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !flattened.isEmpty else { return [] }
+
+        var sentences: [String] = []
+        var current = ""
+        for character in flattened {
+            current.append(character)
+            if ".!?;:".contains(character) {
+                sentences.append(current.trimmingCharacters(in: .whitespaces))
+                current = ""
+            }
+        }
+        if !current.trimmingCharacters(in: .whitespaces).isEmpty {
+            sentences.append(current.trimmingCharacters(in: .whitespaces))
+        }
+
+        var parts: [String] = []
+        var packed = ""
+        for var sentence in sentences {
+            while sentence.count > limit {         // one very long clause
+                let cut = sentence.prefix(limit).lastIndex(of: " ")
+                    ?? sentence.index(sentence.startIndex, offsetBy: limit)
+                parts.append(String(sentence[..<cut]).trimmingCharacters(in: .whitespaces))
+                sentence = String(sentence[cut...]).trimmingCharacters(in: .whitespaces)
+            }
+            if !packed.isEmpty, packed.count + sentence.count + 1 > limit {
+                parts.append(packed)
+                packed = sentence
+            } else {
+                packed = packed.isEmpty ? sentence : packed + " " + sentence
+            }
+        }
+        if !packed.isEmpty { parts.append(packed) }
+        return parts.filter { !$0.isEmpty }
+    }
+
     // MARK: - The two branches
 
     /// Returns the logits for the last position, and its hidden state.

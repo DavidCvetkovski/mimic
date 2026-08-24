@@ -68,6 +68,43 @@ Measured on an M5, and on an iPhone 17 Pro simulator:
 Saying the same thing twice is free: synthesis is deterministic for a given
 seed, so results are cached by voice and text.
 
+## It starts speaking before it has finished thinking
+
+Generation runs slower than real time, so waiting for a whole paragraph means
+waiting longer than it takes to say. All three apps therefore play the first
+sentence while the rest is still being made — a twenty-second passage starts
+after about five seconds instead of twenty.
+
+Two things had to be got right.
+
+**Which streaming.** The runtime ships a chunked decoder that re-decodes a
+rolling window as frames arrive. Measured, it costs about twice the throughput,
+and shrinking the context window to claw that back degrades the audio quickly —
+the difference against a one-shot render goes from 0.018 to 0.36 at the extreme.
+The extra work eats exactly the head start it buys, so the audio finishes no
+sooner. Whole sentences avoid all of it: each is a clean one-shot render, bit
+for bit what the non-streaming path produces, and the seams fall where a speaker
+would pause anyway.
+
+**When to start.** Too early and the sound stops mid-word; too late and there
+was no point. Generation adds 1/r seconds of audio per second of wall clock and
+playback consumes one, so starting with B banked out of a total T holds while
+`B + t/r ≥ t`. The tightest moment is the last one before generation finishes:
+
+```
+B ≥ T · (r − 1) / r
+```
+
+A fraction of the **whole** passage, not of what is left — which is what this
+first shipped with, and which ran dry every time. There is a property test that
+simulates playback at 1.1x, 1.4x, 2x and 3x and asserts the queue never empties.
+It failed on the first version, which is how the error was found.
+
+The length of the passage is predicted from its text before any of it exists —
+`seconds ≈ 0.0647 · characters`, fitted against measured output and within about
+1.3s over a twenty-second line. That is what sizes the progress bar and feeds
+the arithmetic above.
+
 ## Why there is no PyTorch
 
 The obvious build is `transformers` plus the checkpoint. Going through ONNX

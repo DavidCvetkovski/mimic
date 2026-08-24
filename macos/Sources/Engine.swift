@@ -150,6 +150,34 @@ final class Engine: ObservableObject {
 
     // MARK: - Speaking
 
+    /// Stream the audio a sentence at a time, as the engine makes it.
+    ///
+    /// `onEvent` is called on the main actor for each line the engine sends.
+    /// Cancelling the task stops the request, which stops the engine.
+    func speakStream(_ text: String, voice: String,
+                     onEvent: @MainActor (StreamEvent) -> Void) async throws {
+        var request = URLRequest(url: base.appending(path: "/api/speak/stream"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: ["text": text, "voice": voice])
+        request.timeoutInterval = 900
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw EngineError.server("HTTP \(http.statusCode)")
+        }
+        // Newline-delimited JSON: one object per line, no framing of our own.
+        for try await line in bytes.lines {
+            guard !line.isEmpty, let data = line.data(using: .utf8) else { continue }
+            let event = try JSONDecoder().decode(StreamEvent.self, from: data)
+            await MainActor.run { onEvent(event) }
+            if event.type == "error" {
+                throw EngineError.server(event.message ?? "the engine failed")
+            }
+        }
+    }
+
     /// Synthesised audio, and whether it came from the cache.
     func speak(_ text: String, voice: String) async throws -> (Data, Bool) {
         var request = URLRequest(url: base.appending(path: "/api/speak"))
@@ -237,6 +265,39 @@ enum EngineError: LocalizedError {
     var errorDescription: String? {
         if case let .server(message) = self { return message }
         return nil
+    }
+}
+
+/// One line of the streaming response.
+struct StreamEvent: Decodable {
+    let type: String
+    let estimate: Double?
+    let sentences: Int?
+    let sampleRate: Int?
+    let index: Int?
+    let of: Int?
+    let seconds: Double?
+    let rtf: Double?
+    let pcm: String?
+    let cached: Bool?
+    let elapsed: Double?
+    let wav: String?
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case type, estimate, sentences, index, of, seconds, rtf, pcm
+        case cached, elapsed, wav, message
+        case sampleRate = "sample_rate"
+    }
+
+    /// Base64 int16 PCM as the floats the player wants.
+    var samples: [Float] {
+        guard let pcm, let data = Data(base64Encoded: pcm) else { return [] }
+        return data.withUnsafeBytes { raw in
+            (0..<(raw.count / 2)).map {
+                Float(raw.loadUnaligned(fromByteOffset: $0 * 2, as: Int16.self)) / 32_768
+            }
+        }
     }
 }
 

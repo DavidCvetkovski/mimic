@@ -5,17 +5,17 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @EnvironmentObject private var engine: Engine
     @State private var text = "Every word of this was spoken by a model running on my own laptop, in a voice it learned from fifteen seconds of me reading a paragraph aloud."
-    @State private var speaking = false
-    @State private var elapsed: Double = 0
+    @StateObject private var player = StreamPlayer()
+    @State private var task: Task<Void, Never>?
+    @State private var estimate: Double = 0
     @State private var status = ""
+    @State private var sentence = ""
     @State private var error: String?
     // The audio in the player and what produced it. Kept together because the
     // selection can change after something is spoken, and naming the file from
     // the current selection wrote one voice's audio under another's name.
     @State private var current: Spoken?
     @State private var recording = false
-    @State private var player: AVAudioPlayer?
-    @State private var clock: Timer?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -96,30 +96,83 @@ struct ContentView: View {
         .padding(.top, 20)
     }
 
+    private var speaking: Bool { task != nil }
+
     private var controls: some View {
-        HStack(spacing: 11) {
-            Button(speaking ? "Speaking…" : "Speak it") { Task { await speak() } }
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 11) {
+                Button(speaking ? "Stop" : "Speak it") {
+                    speaking ? stop() : start()
+                }
                 .keyboardShortcut(.return, modifiers: .command)
+                // Prominent to start, plain to stop: the destructive-looking
+                // action should not be the one wearing the accent colour.
                 .buttonStyle(.borderedProminent)
+                .tint(speaking ? Color.secondary : Color.accentColor)
                 .controlSize(.large)
-                .disabled(speaking || engine.selected == nil
-                          || !engine.state.isReady || text.trimmed.isEmpty)
+                .disabled(!speaking && (engine.selected == nil
+                                        || !engine.state.isReady || text.trimmed.isEmpty))
 
-            Button("Save .wav…") { save() }
-                .controlSize(.large)
-                .disabled(current == nil)
+                Button("Save .wav…") { save() }
+                    .controlSize(.large)
+                    .disabled(current == nil)
 
-            if speaking {
-                ProgressView().controlSize(.small)
-                Text(String(format: "%.1fs", elapsed))
-                    .font(.system(.callout, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            } else if !status.isEmpty {
-                Text(status).font(.callout).foregroundStyle(.secondary)
+                if !status.isEmpty {
+                    Text(status).font(.callout).foregroundStyle(.secondary)
+                }
+            }
+
+            if speaking || player.buffered > 0 {
+                transport
             }
         }
         .padding(.top, 20)
+    }
+
+    /// The player: how much exists, and how much has been heard. Two bars,
+    /// because during generation they are genuinely different numbers.
+    private var transport: some View {
+        HStack(spacing: 12) {
+            Button {
+                player.isPlaying ? player.pause() : player.play()
+            } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .frame(width: 26, height: 26)
+                    .background(.tint, in: Circle())
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .disabled(player.buffered == 0)
+
+            GeometryReader { geometry in
+                let total = max(player.buffered, estimate, 0.1)
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.quaternary)
+                    Capsule().fill(.tint).opacity(0.28)
+                        .frame(width: geometry.size.width * min(1, player.buffered / total))
+                    Capsule().fill(.tint)
+                        .frame(width: geometry.size.width * min(1, player.position / total))
+                }
+            }
+            .frame(height: 5)
+
+            Text(clockLabel)
+                .font(.system(.caption, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(width: 92, alignment: .trailing)
+        }
+    }
+
+    private var clockLabel: String {
+        func mmss(_ seconds: Double) -> String {
+            let whole = max(0, Int(seconds.rounded()))
+            return String(format: "%d:%02d", whole / 60, whole % 60)
+        }
+        return speaking
+            ? "\(mmss(player.position)) / ~\(mmss(estimate))"
+            : "\(mmss(player.position)) / \(mmss(player.buffered))"
     }
 
     /// Whose voice is in the player. Without it the only clue is the sound,
@@ -159,28 +212,73 @@ struct ContentView: View {
 
     // MARK: - Actions
 
-    private func speak() async {
+    private func start() {
         guard let voice = engine.selected else { return }
         error = nil
         status = ""
-        speaking = true
-        elapsed = 0
-        let began = Date()
-        clock = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-            elapsed = Date().timeIntervalSince(began)
-        }
-        defer { clock?.invalidate(); speaking = false }
+        player.reset()
+        estimate = 0
 
-        do {
-            let (audio, cached) = try await engine.speak(text.trimmed, voice: voice)
-            current = Spoken(audio: audio, voice: voice)
-            player = try AVAudioPlayer(data: audio)
-            player?.play()
-            status = cached ? "from cache"
-                            : String(format: "%.1fs", Date().timeIntervalSince(began))
-        } catch {
-            self.error = error.localizedDescription
+        var worstRtf = 1.2
+        var chunks: [[Float]] = []
+        var rate = 44_100
+
+        task = Task {
+            defer { task = nil }
+            do {
+                try await engine.speakStream(text.trimmed, voice: voice) { event in
+                    switch event.type {
+                    case "start":
+                        estimate = event.estimate ?? 0
+                        rate = event.sampleRate ?? 44_100
+                        status = "about \(Int(estimate))s of audio"
+
+                    case "chunk":
+                        let samples = event.samples
+                        chunks.append(samples)
+                        player.append(samples, sampleRate: rate)
+                        worstRtf = max(worstRtf, event.rtf ?? 1.2)
+                        sentence = "sentence \((event.index ?? 0) + 1) of \(event.of ?? 1)"
+                        status = sentence
+                        if !player.isPlaying,
+                           StreamPlayer.shouldStart(buffered: player.buffered,
+                                                    estimate: max(estimate, player.buffered),
+                                                    realtimeFactor: worstRtf) {
+                            player.play()
+                        }
+
+                    case "done":
+                        if let encoded = event.wav, let data = Data(base64Encoded: encoded) {
+                            // A cache hit streams nothing, so play the whole thing.
+                            current = Spoken(audio: data, voice: voice)
+                            player.append(Spoken.samples(from: data), sampleRate: rate)
+                            player.play()
+                            status = "from cache"
+                        } else {
+                            current = Spoken(audio: Spoken.wav(chunks.flatMap { $0 }, rate: rate),
+                                             voice: voice)
+                            if !player.isPlaying { player.play() }
+                            status = String(format: "%.1fs for %.1fs of audio",
+                                            event.elapsed ?? 0, event.seconds ?? 0)
+                        }
+
+                    default:
+                        break
+                    }
+                }
+            } catch is CancellationError {
+                status = "stopped"
+            } catch {
+                if !Task.isCancelled { self.error = error.localizedDescription }
+            }
         }
+    }
+
+    private func stop() {
+        task?.cancel()
+        task = nil
+        player.stop()
+        status = "stopped"
     }
 
     private func save() {
@@ -269,6 +367,37 @@ private struct VoiceChip: View {
 struct Spoken: Equatable {
     let audio: Data
     let voice: String
+
+    /// Float samples out of a 16-bit mono WAV.
+    static func samples(from wav: Data) -> [Float] {
+        guard wav.count > 44 else { return [] }
+        return wav.dropFirst(44).withUnsafeBytes { raw in
+            (0..<(raw.count / 2)).map {
+                Float(raw.loadUnaligned(fromByteOffset: $0 * 2, as: Int16.self)) / 32_768
+            }
+        }
+    }
+
+    /// And back again, for saving what was streamed.
+    static func wav(_ samples: [Float], rate: Int) -> Data {
+        var data = Data()
+        func put<T: FixedWidthInteger>(_ value: T) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        let bytes = samples.count * 2
+        data.append(contentsOf: Array("RIFF".utf8)); put(UInt32(36 + bytes))
+        data.append(contentsOf: Array("WAVE".utf8))
+        data.append(contentsOf: Array("fmt ".utf8)); put(UInt32(16))
+        put(UInt16(1)); put(UInt16(1))
+        put(UInt32(rate)); put(UInt32(rate * 2))
+        put(UInt16(2)); put(UInt16(16))
+        data.append(contentsOf: Array("data".utf8)); put(UInt32(bytes))
+        for sample in samples {
+            let clamped = max(-1, min(1, sample))
+            put(Int16(clamped * (clamped < 0 ? 32_768 : 32_767)))
+        }
+        return data
+    }
 
     /// A filename out of a voice name, which may contain anything.
     var filename: String {

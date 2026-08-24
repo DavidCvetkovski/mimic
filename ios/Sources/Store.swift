@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 import MimicKit
 import SwiftUI
@@ -26,12 +27,25 @@ final class Store: ObservableObject {
     @Published private(set) var isSpeaking = false
     @Published private(set) var progress = ""
     @Published private(set) var lastTiming = ""
+    /// How long the passage is expected to be, so the bar has a length.
+    @Published private(set) var estimate: Double = 0
+    let player = StreamPlayer()
+
+    /// SwiftUI observes this object, not the objects inside it. Without
+    /// forwarding the player's changes the transport rendered once and then
+    /// sat there: the position advanced, and nothing redrew.
+    private var playerChanges: AnyCancellable?
+
+    init() {
+        playerChanges = player.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+    }
     @Published var text = "Every word of this was spoken by a model running on my phone, in a voice it learned from fifteen seconds of me reading a paragraph aloud."
     @Published var problem: String?
 
     private var runtime: Runtime?
-    private var player: AVAudioPlayer?
-    private var cancelled = false
+    private var task: Task<Void, Never>?
 
     var home: URL {
         FileManager.default.urls(for: .applicationSupportDirectory,
@@ -93,46 +107,84 @@ final class Store: ObservableObject {
 
     // MARK: - Speaking
 
-    func speak() async {
+    /// Speak, a sentence at a time, playing as soon as it is safe to.
+    ///
+    /// Generation runs slower than real time, so waiting for the whole passage
+    /// means waiting longer than it takes to say. Playing too early means
+    /// running dry mid-sentence. StreamPlayer.shouldStart is the arithmetic
+    /// that separates the two.
+    func speak() {
         guard let runtime, let voice = selected, !isSpeaking else { return }
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !words.isEmpty else { return }
 
         isSpeaking = true
-        cancelled = false
         problem = nil
-        progress = "starting…"
-        defer { isSpeaking = false; progress = "" }
+        lastTiming = ""
+        estimate = Runtime.estimate(words)
+        progress = "about \(Int(estimate))s of audio"
+        player.reset()
 
+        let cancel = CancelBox()
+        let rate = runtime.manifest.sampleRate
         let began = Date()
-        do {
-            let box = CancelBox()
-            let samples = try await Task.detached(priority: .userInitiated) { [weak self] in
-                try runtime.synthesize(text: words, voice: voice) { frames in
-                    let seconds = Double(frames) * 2048 / 44_100
-                    Task { @MainActor in self?.progress = String(format: "%.1fs of audio", seconds) }
-                    return !box.isCancelled
+
+        task = Task { [weak self] in
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.isSpeaking = false
+                    self?.progress = ""
+                    self?.task = nil
                 }
-            }.value
+            }
+            do {
+                var worstRtf = 1.2
+                try await Task.detached(priority: .userInitiated) {
+                    try runtime.synthesizeStream(text: words, voice: voice) { chunk in
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            self.player.append(chunk.samples, sampleRate: rate)
+                            worstRtf = max(worstRtf, chunk.realtimeFactor)
+                            self.progress = "sentence \(chunk.index + 1) of \(chunk.of)"
+                            if !self.player.isPlaying,
+                               StreamPlayer.shouldStart(
+                                   buffered: self.player.buffered,
+                                   estimate: max(self.estimate, self.player.buffered),
+                                   realtimeFactor: worstRtf) {
+                                self.player.play()
+                            }
+                        }
+                        return !cancel.isCancelled
+                    }
+                }.value
 
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-            try AVAudioSession.sharedInstance().setActive(true)
-            player = try AVAudioPlayer(data: Audio.wav(samples,
-                                                       sampleRate: runtime.manifest.sampleRate))
-            player?.play()
-
-            let elapsed = Date().timeIntervalSince(began)
-            let duration = Double(samples.count) / Double(runtime.manifest.sampleRate)
-            lastTiming = String(format: "%.1fs for %.1fs of audio · %.2f× real time",
-                                elapsed, duration, elapsed / max(duration, 0.01))
-        } catch {
-            problem = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    if !self.player.isPlaying { self.player.play() }
+                    let elapsed = Date().timeIntervalSince(began)
+                    self.lastTiming = String(
+                        format: "%.1fs for %.1fs of audio · %.2f× real time",
+                        elapsed, self.player.buffered,
+                        elapsed / max(self.player.buffered, 0.01))
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    if !cancel.isCancelled { self?.problem = error.localizedDescription }
+                }
+            }
         }
+        self.cancel = cancel
     }
 
-    func stopPlayback() {
-        cancelled = true
-        player?.stop()
+    private var cancel: CancelBox?
+
+    func stopSpeaking() {
+        cancel?.cancel()
+        task?.cancel()
+        task = nil
+        player.stop()
+        isSpeaking = false
+        progress = ""
     }
 
     // MARK: - Cloning

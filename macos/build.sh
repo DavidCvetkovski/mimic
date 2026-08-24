@@ -14,9 +14,14 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 echo "compiling…"
+# StreamPlayer is compiled in from MimicKit rather than linked or copied. This
+# app talks HTTP to the Python engine and has no business pulling in ONNX
+# Runtime, but the player is pure AVFoundation and there is no reason for two
+# implementations of scheduling buffers back to back.
 swiftc -O -parse-as-library -target "$TARGET" \
     -o "$APP/Contents/MacOS/Mimic" \
-    "$HERE"/Sources/*.swift
+    "$HERE"/Sources/*.swift \
+    "$HERE"/../MimicKit/Sources/MimicKit/StreamPlayer.swift
 
 cp "$HERE/Resources/Info.plist" "$APP/Contents/Info.plist"
 cp "$HERE/Resources/Mimic.icns" "$APP/Contents/Resources/Mimic.icns"

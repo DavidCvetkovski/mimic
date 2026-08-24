@@ -73,6 +73,8 @@ button.go{
 }
 button.go:hover:not(:disabled){background:var(--blood-soft)}
 button.go:disabled{opacity:.4;cursor:not-allowed}
+button.go.stopping{background:transparent;color:var(--blood);
+  box-shadow:inset 0 0 0 1px var(--blood)}
 button.plain{
   font-family:var(--sans);font-size:12px;letter-spacing:.1em;text-transform:uppercase;
   padding:13px 20px;border:1px solid var(--rule);background:transparent;
@@ -82,8 +84,44 @@ button.plain:hover:not(:disabled){border-color:var(--blood-soft);color:var(--ink
 button.plain:disabled{opacity:.4;cursor:not-allowed}
 .status{font-family:var(--mono);font-size:12px;color:var(--muted)}
 
-audio{width:100%;margin-top:22px;display:none}
-audio.on{display:block}
+/* The player, built rather than borrowed. A native <audio> element brings its
+   own chrome — grey, rounded, unmistakably the browser's — and cannot show the
+   thing that matters here: how much has been generated versus how much has been
+   played. Those are two different bars. */
+.player{
+  display:flex;align-items:center;gap:14px;margin-top:22px;
+  padding:14px 16px;background:var(--card);border:1px solid var(--rule);
+}
+.player[hidden]{display:none}
+.pp{
+  width:34px;height:34px;flex:0 0 auto;border-radius:50%;cursor:pointer;
+  border:none;background:var(--blood);position:relative;transition:.15s;
+}
+.pp:hover{background:var(--blood-soft)}
+/* Triangle and bars drawn rather than shipped, so they take the accent colour. */
+.pp::before{
+  content:"";position:absolute;top:50%;left:50%;transform:translate(-40%,-50%);
+  border-left:11px solid var(--card);border-top:7px solid transparent;
+  border-bottom:7px solid transparent;
+}
+.pp.playing::before{
+  transform:translate(-50%,-50%);border:none;
+  width:4px;height:13px;background:var(--card);
+  box-shadow:6px 0 0 var(--card);
+}
+.track{
+  flex:1;height:5px;background:var(--rule);position:relative;cursor:pointer;
+  border-radius:3px;overflow:hidden;
+}
+/* Two bars in one: how much exists, and how much you have heard. */
+.made{position:absolute;inset:0 100% 0 0;background:var(--blood);opacity:.24;
+  transition:right .25s linear}
+.played{position:absolute;inset:0 100% 0 0;background:var(--blood);
+  transition:right .08s linear}
+.clock{
+  font-family:var(--mono);font-size:12px;color:var(--muted);
+  min-width:76px;text-align:right;font-variant-numeric:tabular-nums;
+}
 
 section{margin-top:44px;padding-top:32px;border-top:1px solid var(--rule)}
 h2{
@@ -151,7 +189,14 @@ footer{
   <button class="plain" id="save" disabled>Save .wav</button>
   <span class="status" id="status"></span>
 </div>
-<audio id="player" controls></audio>
+<div class="player" id="player" hidden>
+  <button class="pp" id="pp" aria-label="Play or pause"></button>
+  <div class="track" id="track">
+    <div class="made" id="made"></div>
+    <div class="played" id="played"></div>
+  </div>
+  <span class="clock" id="clock">0:00</span>
+</div>
 <p class="nowplaying" id="nowplaying"></p>
 <div class="msg" id="msg"></div>
 
@@ -273,53 +318,250 @@ const say = (kind, text) => {
 const clearMsg = () => { $('#msg').className = 'msg'; };
 
 // ---------- speaking ----------
+// Audio arrives a sentence at a time and is scheduled on one AudioContext
+// timeline, so the pieces butt up against each other with no seam. An <audio>
+// element cannot do this: it plays one finished file.
+const audio = {
+  context: null,
+  queue: [],          // decoded chunks, in order
+  sources: [],        // scheduled nodes, so they can be stopped
+  startedAt: 0,       // context time playback began
+  offset: 0,          // seconds already played before the current start
+  queued: 0,          // seconds of audio received
+  estimate: 0,        // seconds we expect in total
+  playing: false,
+  done: false,
+};
+
+const clock = seconds => {
+  const whole = Math.max(0, Math.round(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+};
+
+function resetPlayer(){
+  stopPlayback();
+  audio.queue = [];
+  audio.queued = 0;
+  audio.offset = 0;
+  audio.done = false;
+  $('#made').style.right = '100%';
+  $('#played').style.right = '100%';
+  $('#pp').classList.remove('playing');
+}
+
+function paintPlayer(){
+  const total = Math.max(audio.queued, audio.estimate, 0.1);
+  const played = playedSeconds();
+  $('#made').style.right = `${Math.max(0, 100 - audio.queued / total * 100)}%`;
+  $('#played').style.right = `${Math.max(0, 100 - played / total * 100)}%`;
+  $('#clock').textContent = audio.done
+    ? `${clock(played)} / ${clock(audio.queued)}`
+    : `${clock(played)} / ~${clock(audio.estimate)}`;
+}
+
+function playedSeconds(){
+  if (!audio.context) return audio.offset;
+  if (!audio.playing) return audio.offset;
+  return Math.min(audio.offset + (audio.context.currentTime - audio.startedAt),
+                  audio.queued);
+}
+
+/// Schedule everything not yet scheduled, back to back from `from`.
+function schedule(from){
+  let at = from;
+  for (const buffer of audio.queue){
+    const source = audio.context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audio.context.destination);
+    source.start(at);
+    audio.sources.push(source);
+    at += buffer.duration;
+  }
+}
+
+function startPlayback(){
+  if (audio.playing || !audio.queue.length) return;
+  audio.playing = true;
+  audio.startedAt = audio.context.currentTime;
+  // Everything already queued, from where we left off.
+  let skip = audio.offset;
+  let at = audio.startedAt;
+  for (const buffer of audio.queue){
+    if (skip >= buffer.duration){ skip -= buffer.duration; continue; }
+    const source = audio.context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audio.context.destination);
+    source.start(at, skip);
+    audio.sources.push(source);
+    at += buffer.duration - skip;
+    skip = 0;
+  }
+  $('#pp').classList.add('playing');
+}
+
+function stopPlayback(){
+  if (audio.playing) audio.offset = playedSeconds();
+  audio.playing = false;
+  for (const source of audio.sources){ try { source.stop(); } catch {} }
+  audio.sources = [];
+  $('#pp').classList.remove('playing');
+}
+
+/// Append a chunk, and schedule it if we are already playing.
+function enqueue(buffer){
+  audio.queue.push(buffer);
+  audio.queued += buffer.duration;
+  if (audio.playing){
+    // Land it exactly where the queue currently ends.
+    const endsAt = audio.startedAt + (audio.queued - buffer.duration) - audio.offset;
+    const source = audio.context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audio.context.destination);
+    source.start(Math.max(endsAt, audio.context.currentTime));
+    audio.sources.push(source);
+  }
+}
+
+/// Int16 PCM to an AudioBuffer at the engine's rate.
+function toBuffer(base64, rate){
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const pcm = new Int16Array(bytes.buffer);
+  const buffer = audio.context.createBuffer(1, pcm.length, rate);
+  const channel = buffer.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) channel[i] = pcm[i] / 32768;
+  return buffer;
+}
+
+$('#pp').onclick = () => {
+  if (audio.playing) stopPlayback(); else startPlayback();
+  paintPlayer();
+};
+
+$('#track').onclick = event => {
+  if (!audio.queued) return;
+  const box = $('#track').getBoundingClientRect();
+  const total = Math.max(audio.queued, audio.estimate);
+  const wanted = Math.min((event.clientX - box.left) / box.width * total, audio.queued);
+  const wasPlaying = audio.playing;
+  stopPlayback();
+  audio.offset = Math.max(0, wanted);
+  if (wasPlaying) startPlayback();
+  paintPlayer();
+};
+
+let speaking = null;      // the AbortController for the run in flight
+
 $('#speak').onclick = async () => {
+  if (speaking){                       // pressed again: stop
+    speaking.abort();
+    return;
+  }
   const text = $('#text').value.trim();
   if (!text || !chosen) return;
   clearMsg();
-  const button = $('#speak'), status = $('#status');
-  button.disabled = true;
-  const started = performance.now();
-  const tick = setInterval(() => {
-    status.textContent = ((performance.now() - started) / 1000).toFixed(1) + 's';
-  }, 100);
-  status.textContent = '0.0s';
+
+  audio.context = audio.context || new AudioContext();
+  await audio.context.resume();
+  resetPlayer();
+  $('#player').hidden = false;
+  $('#save').disabled = true;
+
+  const button = $('#speak');
+  button.textContent = 'Stop';
+  button.classList.add('stopping');
+  speaking = new AbortController();
+
+  const paint = setInterval(paintPlayer, 100);
+  let worstRtf = 1.2;
 
   try {
-    const res = await api('/speak', {
+    const res = await api('/speak/stream', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text, voice: chosen})
+      body: JSON.stringify({text, voice: chosen}), signal: speaking.signal
     });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-    current = {blob: await res.blob(), voice: chosen, text};
-    const player = $('#player');
-    player.src = URL.createObjectURL(current.blob);
-    player.classList.add('on');
-    player.play().catch(() => {});
-    $('#save').disabled = false;
-    paintNowPlaying();
-    const spoken = res.headers.get('X-Mimic-Seconds');
-    const cached = res.headers.get('X-Mimic-Cached') === '1';
-    status.textContent = cached
-      ? 'from cache'
-      : `${((performance.now() - started) / 1000).toFixed(1)}s for ${spoken}s of audio`;
-  } catch (err) {
-    status.textContent = '';
-    say('bad', String(err.message || err));
-  } finally {
-    clearInterval(tick);
-    button.disabled = false;
-  }
-};
 
-$('#save').onclick = () => {
-  if (!current) return;
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(current.blob);
-  // Named after the voice that actually spoke it, not whichever chip happens
-  // to be lit right now.
-  link.download = `${slug(current.voice)}.wav`;
-  link.click();
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    let rate = 44100;
+
+    for (;;){
+      const {done, value} = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, {stream: true});
+      const lines = pending.split('\n');
+      pending = lines.pop();
+
+      for (const line of lines){
+        if (!line.trim()) continue;
+        const event = JSON.parse(line);
+
+        if (event.type === 'start'){
+          audio.estimate = event.estimate;
+          rate = event.sample_rate;
+          $('#status').textContent = `about ${clock(event.estimate)} of audio`;
+        }
+
+        else if (event.type === 'chunk'){
+          enqueue(toBuffer(event.pcm, rate));
+          worstRtf = Math.max(worstRtf, event.rtf);
+          // Start when the queue is deep enough that playback cannot catch up.
+          //
+          // Generation adds 1/r seconds of audio per second of wall clock and
+          // playback consumes one, so starting with B banked out of a total T
+          // holds while B + t/r >= t. The tightest moment is the last one
+          // before generation finishes, which gives B >= T(r-1)/r — a fraction
+          // of the *whole* passage, not of what is left. (Of what is left was
+          // the first attempt, and it ran dry every time; there is a property
+          // test for this in MimicKit.)
+          if (!audio.playing && audio.offset === 0){
+            const total = Math.max(audio.estimate, audio.queued);
+            const needed = total * Math.max(0, worstRtf - 1) / worstRtf * 1.35;
+            if (audio.queued >= needed || audio.queued >= total) startPlayback();
+          }
+          $('#status').textContent =
+            `sentence ${event.index + 1} of ${event.of}`;
+        }
+
+        else if (event.type === 'done'){
+          audio.done = true;
+          if (event.cached && event.wav){
+            // Nothing was streamed; decode the whole thing and play it.
+            const bytes = Uint8Array.from(atob(event.wav), c => c.charCodeAt(0));
+            const buffer = await audio.context.decodeAudioData(bytes.buffer.slice(0));
+            audio.queue = [buffer];
+            audio.queued = buffer.duration;
+            current = {blob: new Blob([bytes], {type: 'audio/wav'}), voice: chosen, text};
+            startPlayback();
+          } else {
+            current = {blob: wavFromQueue(rate), voice: chosen, text};
+            if (!audio.playing) startPlayback();
+          }
+          $('#save').disabled = false;
+          paintNowPlaying();
+          $('#status').textContent = event.cached
+            ? 'from cache'
+            : `${event.elapsed}s for ${event.seconds}s of audio`;
+        }
+
+        else if (event.type === 'error'){
+          throw new Error(event.message);
+        }
+      }
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') say('bad', String(err.message || err));
+    else $('#status').textContent = 'stopped';
+  } finally {
+    clearInterval(paint);
+    paintPlayer();
+    speaking = null;
+    button.textContent = 'Speak it';
+    button.classList.remove('stopping');
+  }
 };
 
 // A filename, out of a voice name that may contain anything.
@@ -327,8 +569,17 @@ const slug = name => (String(name || 'mimic')
   .normalize('NFKD').replace(/[^\w\s-]/g, '').trim()
   .replace(/[\s_]+/g, '-').toLowerCase()) || 'mimic';
 
-// Say whose voice is in the player. Without this the only clue was the sound
-// itself, which is no help at all when comparing two takes.
+$('#save').onclick = () => {
+  if (!current) return;
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(current.blob);
+  // Named after the voice that actually spoke it, not whichever chip is lit.
+  link.download = `${slug(current.voice)}.wav`;
+  link.click();
+};
+
+// Say whose voice is in the player, and flag it when that is no longer the
+// voice selected above — the state that made the old save bug invisible.
 function paintNowPlaying(){
   const label = $('#nowplaying');
   if (!current){ label.textContent = ''; return; }
@@ -336,6 +587,16 @@ function paintNowPlaying(){
   label.innerHTML = `<strong>${esc(current.voice)}</strong>`
     + (stale ? ' — not the voice selected above' : '');
   label.className = 'nowplaying' + (stale ? ' stale' : '');
+}
+
+/// Stitch the queued chunks back into one WAV, for saving.
+function wavFromQueue(rate){
+  const total = audio.queue.reduce((n, b) => n + b.length, 0);
+  const samples = new Float32Array(total);
+  let at = 0;
+  for (const buffer of audio.queue){ samples.set(buffer.getChannelData(0), at); at += buffer.length; }
+  const bytes = encodeWav(samples, rate);
+  return new Blob([bytes], {type: 'audio/wav'});
 }
 
 // ---------- recording ----------

@@ -166,3 +166,121 @@ enum WavReader {
         return (samples, Int(rate))
     }
 }
+
+/// Splitting, and the estimate that sizes the progress bar.
+final class ChunkingTests: XCTestCase {
+
+    func testASingleSentenceIsOneChunk() {
+        XCTAssertEqual(Runtime.split("Just the one."), ["Just the one."])
+    }
+
+    func testItSplitsWhereASpeakerWouldPause() {
+        let parts = Runtime.split(
+            "First sentence here. Second sentence here. Third sentence here.", limit: 30)
+        XCTAssertEqual(parts.count, 3)
+    }
+
+    func testNothingExceedsTheLimit() {
+        let text = (0..<40).map { "Sentence number \($0) goes here." }.joined(separator: " ")
+        for part in Runtime.split(text, limit: 110) {
+            XCTAssertLessThanOrEqual(part.count, 110, part)
+        }
+    }
+
+    func testAClauseLongerThanTheLimitIsBrokenOnASpace() {
+        // Better an awkward break than an input the model silently truncates.
+        let parts = Runtime.split(String(repeating: "word ", count: 200), limit: 100)
+        XCTAssertFalse(parts.isEmpty)
+        for part in parts { XCTAssertLessThanOrEqual(part.count, 100) }
+    }
+
+    func testEveryWordSurvivesTheRoundTrip() {
+        let text = "One thing happened. Then another; then a third! And finally, this."
+        let rejoined = Runtime.split(text, limit: 25).joined(separator: " ")
+        XCTAssertEqual(rejoined.split(separator: " ").map(String.init),
+                       text.split(separator: " ").map(String.init))
+    }
+
+    func testEmptyTextGivesNoChunks() {
+        XCTAssertTrue(Runtime.split("   ").isEmpty)
+    }
+
+    /// Measured against real output: the fit is within about 1.3s over a
+    /// twenty-second line, and the apps rely on it to decide when to start.
+    func testTheEstimateTracksMeasuredDurations() {
+        let measured: [(String, Double)] = [
+            (String(repeating: "x", count: 21), 1.49),
+            (String(repeating: "x", count: 83), 5.34),
+            (String(repeating: "x", count: 142), 8.73),
+            (String(repeating: "x", count: 288), 18.39),
+        ]
+        for (text, actual) in measured {
+            let predicted = Runtime.estimate(text)
+            XCTAssertEqual(predicted, actual, accuracy: 1.6,
+                           "\(text.count) chars: predicted \(predicted), measured \(actual)")
+        }
+    }
+
+    func testTheEstimateIsNeverZero() {
+        // A zero would make the progress bar divide by it.
+        XCTAssertGreaterThan(Runtime.estimate(""), 0)
+    }
+}
+
+/// When it is safe to start playing.
+///
+/// The arithmetic that decides this is the whole reason streaming is worth
+/// doing, and getting it wrong is audible: too eager and the sound stops in the
+/// middle of a word, too cautious and there was no point streaming.
+final class BufferingTests: XCTestCase {
+
+    func testGenerationFasterThanRealTimeStartsAtOnce() {
+        // Nothing to bank: it will only get further ahead.
+        XCTAssertTrue(StreamPlayer.shouldStart(buffered: 0.5, estimate: 20,
+                                               realtimeFactor: 0.9))
+    }
+
+    func testSlowGenerationWaits() {
+        // At 2x real time, half of what remains has to be banked first.
+        XCTAssertFalse(StreamPlayer.shouldStart(buffered: 1, estimate: 20,
+                                                realtimeFactor: 2.0))
+    }
+
+    func testItStartsOnceEnoughIsBanked() {
+        XCTAssertTrue(StreamPlayer.shouldStart(buffered: 15, estimate: 20,
+                                               realtimeFactor: 2.0))
+    }
+
+    func testTheLastChunkAlwaysPlays() {
+        // Nothing left to generate, so there is nothing to run out of.
+        XCTAssertTrue(StreamPlayer.shouldStart(buffered: 12, estimate: 12,
+                                               realtimeFactor: 5.0))
+    }
+
+    /// The property that matters: having started, the queue never runs dry.
+    func testPlaybackNeverCatchesUp() {
+        for factor in [1.1, 1.4, 2.0, 3.0] {
+            let total = 20.0
+            var banked = 0.0
+            var startedAt: Double?
+            var wallClock = 0.0
+            let step = 1.0                       // a sentence's worth at a time
+
+            while banked < total {
+                banked += step
+                wallClock += step * factor
+                if startedAt == nil,
+                   StreamPlayer.shouldStart(buffered: banked, estimate: total,
+                                            realtimeFactor: factor) {
+                    startedAt = wallClock
+                }
+                if let began = startedAt {
+                    let played = wallClock - began
+                    XCTAssertLessThanOrEqual(played, banked + 0.001,
+                        "at \(factor)x the queue ran dry: played \(played), had \(banked)")
+                }
+            }
+            XCTAssertNotNil(startedAt, "never started at \(factor)x")
+        }
+    }
+}
