@@ -75,30 +75,50 @@ guard let text = arguments.first, !text.hasPrefix("--") else {
 
 do {
     var began = Date()
+    let threads = Int(option("threads", "")) ?? Runtime.recommendedThreads
     let runtime = try Runtime(modelDirectory: modelDirectory,
-                              voicesDirectory: voicesDirectory, threads: 5)
+                              voicesDirectory: voicesDirectory, threads: threads)
     print(String(format: "  load      %5.1fs", Date().timeIntervalSince(began)))
 
     var options = Runtime.Options()
     options.seed = UInt64(option("seed", "42")) ?? 42
 
     began = Date()
-    var lastReport = Date()
-    let samples = try runtime.synthesize(text: text,
-                                         voice: option("voice", "David"),
-                                         options: options) { frames in
-        if Date().timeIntervalSince(lastReport) > 1 {
-            lastReport = Date()
-            print(String(format: "            %5.1fs of audio so far",
-                         Double(frames) * 2048 / 44_100))
+    var samples: [Float] = []
+    var firstSound: Double?
+    if arguments.contains("--stream") {
+        try runtime.synthesizeStream(text: text, voice: option("voice", "David"),
+                                     options: options) { chunk in
+            if firstSound == nil { firstSound = Date().timeIntervalSince(began) }
+            samples.append(contentsOf: chunk.samples)
+            print(String(format: "            sentence %d/%d at %5.1fs",
+                         chunk.index + 1, chunk.of, Date().timeIntervalSince(began)))
+            return true
         }
-        return true
+    } else {
+        var lastReport = Date()
+        samples = try runtime.synthesize(text: text, voice: option("voice", "David"),
+                                         options: options) { frames in
+            if Date().timeIntervalSince(lastReport) > 1 {
+                lastReport = Date()
+                print(String(format: "            %5.1fs of audio so far",
+                             Double(frames) * 2048 / 44_100))
+            }
+            return true
+        }
+    }
+    if let firstSound {
+        print(String(format: "  first     %5.1fs", firstSound))
     }
 
     let elapsed = Date().timeIntervalSince(began)
     let duration = Double(samples.count) / Double(runtime.manifest.sampleRate)
     print(String(format: "  generate  %5.1fs -> %.1fs of audio   RTF %.2fx",
                  elapsed, duration, elapsed / max(duration, 0.01)))
+
+    if ProcessInfo.processInfo.environment["MIMIC_PROFILE"] != nil {
+        print(runtime.profileReport)
+    }
 
     let output = option("out", "mimic-swift.wav")
     try Audio.wav(samples, sampleRate: runtime.manifest.sampleRate)

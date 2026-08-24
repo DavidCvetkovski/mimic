@@ -248,6 +248,7 @@ struct ContentView: View {
                         }
 
                     case "done":
+                        player.isComplete = true
                         if let encoded = event.wav, let data = Data(base64Encoded: encoded) {
                             // A cache hit streams nothing, so play the whole thing.
                             current = Spoken(audio: data, voice: voice)

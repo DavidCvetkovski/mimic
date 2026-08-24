@@ -1,57 +1,76 @@
 import Foundation
-import OnnxRuntimeBindings
+import MimicORT
 
 /// The key/value cache for one autoregressive branch.
 ///
-/// Held as flat Float16 buffers with the shape the graph expects, and written
-/// in place: the model returns only the slice for the positions it just
-/// processed, and those get scattered back into the full buffer. Allocating a
-/// fresh cache per step instead would dominate the runtime — this is called
-/// ten times per frame, twenty-one times a second of audio.
-struct KVCache {
+/// The buffers are allocated once and rewritten in place, and each has one
+/// `ORT.Value` wrapped permanently around it. That matters more than it looks:
+/// the slow branch holds forty-eight tensors of half a megabyte each, and
+/// building fresh ones per step meant allocating and copying twenty-four
+/// megabytes every frame — over five hundred megabytes a second at
+/// twenty-one frames — to hand the runtime data it already had.
+///
+/// A class rather than a struct because the tensors point into these buffers;
+/// copying the cache would leave them pointing at the original.
+final class KVCache {
     let shape: [Int]                 // [1, heads, sequence, dim]
-    private(set) var buffers: [[Float16]]
+    let heads: Int
+    let sequence: Int
+    let dim: Int
 
-    var heads: Int { shape[1] }
-    var sequence: Int { shape[2] }
-    var dim: Int { shape[3] }
+    private let elements: Int
+    private var buffers: [UnsafeMutablePointer<Float16>] = []
+    private var tensors: [ORT.Value] = []
 
-    init(layers: Int, heads: Int, sequence: Int, dim: Int) {
+    init(layers: Int, heads: Int, sequence: Int, dim: Int) throws {
         shape = [1, heads, sequence, dim]
-        // Two per layer: keys and values, interleaved, as the graph names them.
-        buffers = Array(repeating: [Float16](repeating: 0, count: heads * sequence * dim),
-                        count: layers * 2)
+        self.heads = heads
+        self.sequence = sequence
+        self.dim = dim
+        elements = heads * sequence * dim
+
+        // Two per layer, keys and values interleaved, as the graph names them.
+        for _ in 0..<(layers * 2) {
+            let buffer = UnsafeMutablePointer<Float16>.allocate(capacity: elements)
+            buffer.initialize(repeating: 0, count: elements)
+            buffers.append(buffer)
+            tensors.append(try ORT.Value(borrowing: buffer,
+                                         byteCount: elements * MemoryLayout<Float16>.stride,
+                                         shape: shape,
+                                         type: ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16))
+        }
     }
+
+    deinit {
+        for buffer in buffers { buffer.deallocate() }
+    }
+
+    /// Back to zeros, without giving the memory back — the fast branch needs a
+    /// clean cache for every frame, twenty-one times a second.
+    func clear() {
+        for buffer in buffers { buffer.update(repeating: 0, count: elements) }
+    }
+
+    /// The tensor for one layer. The same object every time; only its contents
+    /// change.
+    func value(at index: Int) -> ORT.Value { tensors[index] }
 
     /// Scatter `delta` — shaped [1, heads, positions.count, dim] — into the
     /// rows named by `positions`.
-    mutating func update(index: Int, positions: [Int], delta: [Float16]) {
+    func update(index: Int, positions: [Int], delta: [Float16]) {
         let count = positions.count
         guard count > 0, delta.count >= heads * count * dim else { return }
-        // Moved out of `buffers` for the duration: writing through a pointer
-        // into an array while that array is also the receiver is an
-        // exclusivity violation, and the compiler is right to refuse it.
-        var buffer = buffers[index]
-        buffers[index] = []
-        buffer.withUnsafeMutableBufferPointer { cache in
-            delta.withUnsafeBufferPointer { source in
-                for head in 0..<heads {
-                    let cacheHead = head * sequence * dim
-                    let sourceHead = head * count * dim
-                    for (slot, position) in positions.enumerated() where position < sequence {
-                        let to = cacheHead + position * dim
-                        let from = sourceHead + slot * dim
-                        for element in 0..<dim {
-                            cache[to + element] = source[from + element]
-                        }
-                    }
+        let cache = buffers[index]
+        delta.withUnsafeBufferPointer { source in
+            guard let base = source.baseAddress else { return }
+            for head in 0..<heads {
+                let cacheHead = head * sequence * dim
+                let sourceHead = head * count * dim
+                for (slot, position) in positions.enumerated() where position < sequence {
+                    (cache + cacheHead + position * dim)
+                        .update(from: base + sourceHead + slot * dim, count: dim)
                 }
             }
         }
-        buffers[index] = buffer
-    }
-
-    func value(at index: Int) throws -> ORT.Value {
-        try ORT.Value.float16(buffers[index], shape: shape)
     }
 }

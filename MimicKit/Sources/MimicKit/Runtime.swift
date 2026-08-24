@@ -29,6 +29,34 @@ public final class Runtime {
     private let decoder: ORT.Session
     private let prompts: PromptBuilder
 
+    /// Every semantic token the model may emit, plus the stop token. Built once
+    /// — it is four thousand entries and was being rebuilt for every frame,
+    /// twenty-one times a second.
+    private let allowedSemantic: [Int]
+
+    /// Where the time goes, when MIMIC_PROFILE is set. Off by default and free
+    /// when off — measuring the wrong thing confidently is how the last two
+    /// optimisations were chosen, so this exists to stop that happening again.
+    struct Profile {
+        var slow = 0.0, fast = 0.0, sample = 0.0, decode = 0.0
+        var slowCalls = 0, fastCalls = 0
+        var description: String {
+            let total = slow + fast + sample + decode
+            func share(_ part: Double) -> String {
+                String(format: "%5.1fs (%2.0f%%)", part, total > 0 ? part / total * 100 : 0)
+            }
+            return """
+              slow AR   \(share(slow))  over \(slowCalls) calls
+              fast AR   \(share(fast))  over \(fastCalls) calls
+              sampling  \(share(sample))
+              decode    \(share(decode))
+            """
+        }
+    }
+    public private(set) var profiling = ProcessInfo.processInfo.environment["MIMIC_PROFILE"] != nil
+    var profile = Profile()
+    public var profileReport: String { profile.description }
+
     public init(modelDirectory: URL, voicesDirectory: URL, threads: Int = 4) throws {
         guard FileManager.default.fileExists(
             atPath: modelDirectory.appending(path: "runtime_manifest.json").path) else {
@@ -39,21 +67,28 @@ public final class Runtime {
 
         environment = try ORT.Env()
         let env = environment
-        func session(_ name: String) throws -> ORT.Session {
+        func session(_ name: String, coreML: Bool = false) throws -> ORT.Session {
             let path = modelDirectory.appending(path: name).path
             guard FileManager.default.fileExists(atPath: path) else {
                 throw MimicError.modelMissing(name)
             }
-            return try ORT.Session(env: env, path: path, threads: threads)
+            return try ORT.Session(env: env, path: path, threads: threads, coreML: coreML)
         }
         slow = try session("slow_ar_int4.onnx")
         fast = try session("fast_ar_int4.onnx")
+        // CPU. CoreML was tried for the decoder — it is dense convolution and
+        // looks like an ideal candidate — and it fails at run time with
+        // "Unable to compute the prediction using a neural network model".
+        // The fp16 graph is not something the CoreML EP can take. ORT.Session
+        // keeps the plumbing for it, since another model may fare better.
         decoder = try session("codec_decoder_fp16.onnx")
 
         prompts = PromptBuilder(
             tokenizer: try Runtime.loadTokenizer(from: modelDirectory),
             semanticBeginID: manifest.semanticBeginID,
             numCodebooks: manifest.numCodebooks)
+        allowedSemantic = Array(manifest.semanticBeginID...manifest.semanticEndID)
+                        + [manifest.imEndID]
     }
 
     /// Load the tokenizer that ships beside the weights.
@@ -97,45 +132,53 @@ public final class Runtime {
         let budget = min(options.maxNewTokens, manifest.maxSeqLen - promptLength)
 
         var sampler = Sampler(seed: options.seed)
-        var slowCache = KVCache(layers: manifest.numLayers,
-                                heads: manifest.nLocalHeads,
-                                sequence: manifest.maxSeqLen,
-                                dim: manifest.headDim)
+        let slowCache = try KVCache(layers: manifest.numLayers,
+                                    heads: manifest.nLocalHeads,
+                                    sequence: manifest.maxSeqLen,
+                                    dim: manifest.headDim)
+        // Built once and cleared per frame rather than rebuilt: the fast branch
+        // runs for every frame, and allocating its eight tensors twenty-one
+        // times a second is pure waste.
+        let fastCache = try KVCache(layers: manifest.numFastLayers,
+                                    heads: manifest.fastNLocalHeads,
+                                    sequence: manifest.numCodebooks,
+                                    dim: manifest.fastHeadDim)
 
         // The whole prompt in one pass, then one token at a time.
         var (logits, hidden) = try slowStep(
             codes: prompt.flatMap { $0 },
             shape: [1, manifest.numCodebooks + 1, promptLength],
             positions: Array(0..<promptLength),
-            cache: &slowCache)
+            cache: slowCache)
 
         var frames: [[Int32]] = []
         var recent: [Int] = []
 
         for step in 0..<budget {
+            let sampledAt = profiling ? Date() : nil
             let semantic = sampleSemantic(logits: logits, recent: recent,
                                           options: options, sampler: &sampler)
+            if let sampledAt { profile.sample += Date().timeIntervalSince(sampledAt) }
             if semantic == manifest.imEndID { break }
             recent.append(semantic)
             if recent.count > 10 { recent.removeFirst(recent.count - 10) }
 
-            // The fast branch runs from scratch for every frame: its cache
-            // spans the ten codebooks of this frame only, not the sequence.
-            var fastCache = KVCache(layers: manifest.numFastLayers,
-                                    heads: manifest.fastNLocalHeads,
-                                    sequence: manifest.numCodebooks,
-                                    dim: manifest.fastHeadDim)
+            // The fast branch starts fresh for every frame: its cache spans
+            // the ten codebooks of this frame only, not the sequence.
+            fastCache.clear()
             _ = try fastStep(hidden: hidden, token: 0, useHidden: true,
-                             position: 0, cache: &fastCache)
+                             position: 0, cache: fastCache)
 
             var token = min(max(semantic - manifest.semanticBeginID, 0),
                             manifest.codebookSize - 1)
             var codebooks: [Int32] = [Int32(token)]
             for position in 1..<manifest.numCodebooks {
                 let fastLogits = try fastStep(hidden: hidden, token: token, useHidden: false,
-                                              position: position, cache: &fastCache)
+                                              position: position, cache: fastCache)
+                let pickedAt = profiling ? Date() : nil
                 token = sampler.pick(from: fastLogits, temperature: options.temperature,
                                      topP: options.topP, topK: options.topK)
+                if let pickedAt { profile.sample += Date().timeIntervalSince(pickedAt) }
                 codebooks.append(Int32(token))
             }
             frames.append(codebooks)
@@ -149,7 +192,7 @@ public final class Runtime {
                 codes: column,
                 shape: [1, manifest.numCodebooks + 1, 1],
                 positions: [promptLength + step],
-                cache: &slowCache)
+                cache: slowCache)
         }
 
         guard !frames.isEmpty else {
@@ -167,6 +210,8 @@ public final class Runtime {
                 flat[book * frames.count + index] = Int64(frame[book])
             }
         }
+        let began = profiling ? Date() : nil
+        defer { if let began { profile.decode += Date().timeIntervalSince(began) } }
         let input = try ORT.Value.int64(flat, shape: [1, codebooks, frames.count])
         guard let audio = try decoder.run(["codes": input]).first else {
             throw MimicError.inference("the decoder returned nothing")
@@ -207,14 +252,21 @@ public final class Runtime {
         let parts = Runtime.split(text)
         let began = Date()
         var seconds = 0.0
+        let silence = [Float](repeating: 0, count: Int(Double(manifest.sampleRate) * 0.18))
 
+        // Sentence by sentence, in order, on one thread.
+        //
+        // Decoding was tried on a background thread, overlapping the next
+        // sentence's generation — it is 44% of the work, and an autoregressive
+        // loop looks like it should leave cores idle. It does not: overlapping
+        // left the wall clock unchanged and pushed the slow branch from 10.6s
+        // to 15.7s, because the two were competing for the same cores all
+        // along. The threading, the ordering buffer and the locks bought
+        // nothing, so they are not here.
         for (index, part) in parts.enumerated() {
             var samples = try synthesize(text: part, voice: voice, options: options)
             // A breath between sentences, or they run together.
-            if index < parts.count - 1 {
-                samples.append(contentsOf:
-                    [Float](repeating: 0, count: Int(Double(manifest.sampleRate) * 0.18)))
-            }
+            if index < parts.count - 1 { samples.append(contentsOf: silence) }
             seconds += Double(samples.count) / Double(manifest.sampleRate)
             let elapsed = Date().timeIntervalSince(began)
             let carryOn = onChunk(Chunk(samples: samples, index: index, of: parts.count,
@@ -280,17 +332,19 @@ public final class Runtime {
 
     /// Returns the logits for the last position, and its hidden state.
     private func slowStep(codes: [Int64], shape: [Int], positions: [Int],
-                          cache: inout KVCache) throws -> ([Float], [Float16]) {
+                          cache: KVCache) throws -> ([Float], [Float16]) {
         var inputs: [String: ORT.Value] = [
             "codes": try ORT.Value.int64(codes, shape: shape),
             "input_pos": try ORT.Value.int64(positions.map(Int64.init),
                                           shape: [positions.count]),
         ]
         for layer in 0..<manifest.numLayers {
-            inputs["cache_key_\(layer)"] = try cache.value(at: 2 * layer)
-            inputs["cache_value_\(layer)"] = try cache.value(at: 2 * layer + 1)
+            inputs["cache_key_\(layer)"] = cache.value(at: 2 * layer)
+            inputs["cache_value_\(layer)"] = cache.value(at: 2 * layer + 1)
         }
+        let began = profiling ? Date() : nil
         let outputs = try slow.run(inputs)
+        if let began { profile.slow += Date().timeIntervalSince(began); profile.slowCalls += 1 }
 
         // The first two outputs are logits and hidden state; the rest are the
         // cache slices for the positions just processed, in layer order.
@@ -312,7 +366,7 @@ public final class Runtime {
     }
 
     private func fastStep(hidden: [Float16], token: Int, useHidden: Bool,
-                          position: Int, cache: inout KVCache) throws -> [Float] {
+                          position: Int, cache: KVCache) throws -> [Float] {
         var inputs: [String: ORT.Value] = [
             "slow_hidden": try ORT.Value.float16(hidden, shape: [1, 1, hidden.count]),
             "token_id": try ORT.Value.int64([Int64(token)], shape: [1, 1]),
@@ -320,10 +374,12 @@ public final class Runtime {
             "input_pos": try ORT.Value.int64([Int64(position)], shape: [1]),
         ]
         for layer in 0..<manifest.numFastLayers {
-            inputs["cache_key_\(layer)"] = try cache.value(at: 2 * layer)
-            inputs["cache_value_\(layer)"] = try cache.value(at: 2 * layer + 1)
+            inputs["cache_key_\(layer)"] = cache.value(at: 2 * layer)
+            inputs["cache_value_\(layer)"] = cache.value(at: 2 * layer + 1)
         }
+        let began = profiling ? Date() : nil
         let outputs = try fast.run(inputs)
+        if let began { profile.fast += Date().timeIntervalSince(began); profile.fastCalls += 1 }
         guard outputs.count >= 1 + manifest.numFastLayers * 2 else {
             throw MimicError.inference("the fast branch returned \(outputs.count) outputs")
         }
@@ -346,8 +402,7 @@ public final class Runtime {
                                 options: Options, sampler: inout Sampler) -> Int {
         let begin = manifest.semanticBeginID
         let end = manifest.semanticEndID
-        var allowed = Array(begin...end)
-        allowed.append(manifest.imEndID)
+        let allowed = allowedSemantic
 
         let usable = manifest.slowLogitsLayout == "semantic_then_eos"
             ? logits
@@ -361,5 +416,30 @@ public final class Runtime {
         let hot = allowed[min(hotIndex, allowed.count - 1)]
         if normal >= begin, normal <= end, recent.contains(normal) { return hot }
         return normal
+    }
+}
+
+public extension Runtime {
+    /// How many threads to give the runtime.
+    ///
+    /// The performance-core count, not the total. Apple silicon reports its
+    /// efficiency cores in `activeProcessorCount`, and handing them work is
+    /// actively harmful here: measured on an M5, going from four threads to
+    /// ten took the slow branch from 6.8s to 13.9s — the fast cores end up
+    /// waiting on the slow ones at every synchronisation point.
+    ///
+    ///     threads   2      4      6      8     10
+    ///     RTF     3.38x  2.86x  3.04x  3.93x  4.98x
+    ///
+    /// Same question on a phone, same answer: an iPhone has two performance
+    /// cores among six.
+    static var recommendedThreads: Int {
+        var count = 0
+        var size = MemoryLayout<Int>.size
+        if sysctlbyname("hw.perflevel0.logicalcpu", &count, &size, nil, 0) == 0, count > 0 {
+            return count
+        }
+        // Older chips report no performance levels because every core is one.
+        return max(2, ProcessInfo.processInfo.activeProcessorCount)
     }
 }

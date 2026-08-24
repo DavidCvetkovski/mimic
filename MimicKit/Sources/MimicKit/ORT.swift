@@ -67,6 +67,29 @@ enum ORT {
             bytes = 0
         }
 
+        /// Wrap a buffer somebody else owns and keeps alive.
+        ///
+        /// The runtime borrows rather than copies, so this is how a tensor can
+        /// be made once and its contents rewritten between runs — which is the
+        /// difference between copying the KV cache every step and not.
+        init(borrowing buffer: UnsafeMutableRawPointer, byteCount: Int,
+             shape: [Int], type: ONNXTensorElementDataType) throws {
+            storage = nil                     // not ours to free
+            bytes = byteCount
+
+            var memoryInfo: OpaquePointer?
+            try ORT.check(ORT.api.pointee.CreateCpuMemoryInfo(
+                OrtArenaAllocator, OrtMemTypeDefault, &memoryInfo))
+            defer { ORT.api.pointee.ReleaseMemoryInfo(memoryInfo) }
+
+            var dimensions = shape.map(Int64.init)
+            var pointer: OpaquePointer?
+            try ORT.check(ORT.api.pointee.CreateTensorWithDataAsOrtValue(
+                memoryInfo, buffer, byteCount, &dimensions, dimensions.count, type, &pointer))
+            guard let pointer else { throw MimicError.inference("could not wrap a buffer") }
+            handle = pointer
+        }
+
         /// Copy `values` into a buffer this object owns, and make a tensor of it.
         init<T>(_ values: [T], shape: [Int], type: ONNXTensorElementDataType) throws {
             // A local, not self.bytes: the closure below would otherwise
@@ -186,13 +209,23 @@ enum ORT {
         private let inputCStrings: [UnsafePointer<CChar>?]
         private let outputCStrings: [UnsafePointer<CChar>?]
 
-        init(env: Env, path: String, threads: Int) throws {
+        init(env: Env, path: String, threads: Int, coreML: Bool = false) throws {
             var options: OpaquePointer?
             try ORT.check(ORT.api.pointee.CreateSessionOptions(&options))
             defer { ORT.api.pointee.ReleaseSessionOptions(options) }
             try ORT.check(ORT.api.pointee.SetIntraOpNumThreads(options, Int32(threads)))
             try ORT.check(ORT.api.pointee.SetSessionGraphOptimizationLevel(options, ORT_ENABLE_ALL))
             try ORT.check(ORT.api.pointee.SetSessionLogSeverityLevel(options, 3))
+
+            // CoreML takes whichever subgraphs it can and leaves the rest on
+            // the CPU. Worth offering for the codec decoder, which is dense
+            // convolution; the autoregressive branches are a poor fit and are
+            // not offered it.
+            if coreML {
+                var flags: UInt32 = 0
+                flags |= UInt32(COREML_FLAG_ONLY_ENABLE_DEVICE_WITH_ANE.rawValue)
+                _ = OrtSessionOptionsAppendExecutionProvider_CoreML(options, flags)
+            }
 
             var pointer: OpaquePointer?
             try ORT.check(ORT.api.pointee.CreateSession(env.handle, path, options, &pointer))

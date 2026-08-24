@@ -84,7 +84,9 @@ final class Store: ObservableObject {
     func load() async {
         stage = .loading
         let directories = (modelDirectory, voicesDirectory)
-        let cores = max(2, ProcessInfo.processInfo.activeProcessorCount / 2)
+        // The performance-core count. Including the efficiency cores measurably
+        // slows this down — see Runtime.recommendedThreads.
+        let cores = Runtime.recommendedThreads
         do {
             // Off the main actor: this maps a gigabyte of weights and the UI
             // should keep drawing while it happens.
@@ -160,6 +162,7 @@ final class Store: ObservableObject {
 
                 await MainActor.run { [weak self] in
                     guard let self else { return }
+                    self.player.isComplete = true
                     if !self.player.isPlaying { self.player.play() }
                     let elapsed = Date().timeIntervalSince(began)
                     self.lastTiming = String(

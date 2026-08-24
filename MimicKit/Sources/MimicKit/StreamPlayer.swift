@@ -19,6 +19,9 @@ public final class StreamPlayer: ObservableObject {
     @Published public private(set) var buffered: Double = 0
     /// Seconds played, for a progress bar.
     @Published public private(set) var position: Double = 0
+    /// Set once every chunk has been handed over, so the end of the audio can
+    /// be told apart from merely having caught up with generation.
+    @Published public var isComplete = false
 
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
@@ -57,6 +60,7 @@ public final class StreamPlayer: ObservableObject {
         stop()
         buffered = 0
         position = 0
+        isComplete = false
     }
 
     /// Hand over one finished chunk. Starts the engine on the first one.
@@ -97,6 +101,13 @@ public final class StreamPlayer: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self, let startedAt = self.startedAt, self.isPlaying else { return }
                     self.position = min(Date().timeIntervalSince(startedAt), self.buffered)
+                    // Reaching the end is not the same as running out of
+                    // buffer: only the first means playback is over, and only
+                    // then should the button offer to start it again.
+                    if self.isComplete, self.position >= self.buffered - 0.05 {
+                        self.pause()
+                        self.position = self.buffered
+                    }
                 }
             }
         } catch {
