@@ -1,0 +1,268 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		7A143688C99925D1BE7A30C9 /* MimicApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7491CE01CE4BC4EF9B940627 /* MimicApp.swift */; };
+		2656953E4D047EA313D93A15 /* ModelDownload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6842CB57FA6D015B4F45FF53 /* ModelDownload.swift */; };
+		99701C37F6612DF6325BF005 /* RecordView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C787D59C8DCFE4670045AF /* RecordView.swift */; };
+		6A12C84EDE82DE50A72D26BA /* Recorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DD5977CFD59104608857DC8 /* Recorder.swift */; };
+		882662D566DE4FC84D7B1EBD /* SpeakView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EFB7CB5993B49588A37178C /* SpeakView.swift */; };
+		D7FCDAA751F5C6E177E3CF5F /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = CADF772F7C41FE1CBDB1993E /* Store.swift */; };
+		AA400DFD4219F700A8EA7668 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3685E330EC5277A9DD5661C6 /* Assets.xcassets */; };
+		817D16AC47A5A7B611E8D7B3 /* MimicKit in Frameworks */ = {isa = PBXBuildFile; productRef = 05B4C13CEE8FCA4F3D850987 /* MimicKit */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		7491CE01CE4BC4EF9B940627 /* MimicApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MimicApp.swift; sourceTree = "<group>"; };
+		6842CB57FA6D015B4F45FF53 /* ModelDownload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownload.swift; sourceTree = "<group>"; };
+		B8C787D59C8DCFE4670045AF /* RecordView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordView.swift; sourceTree = "<group>"; };
+		6DD5977CFD59104608857DC8 /* Recorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Recorder.swift; sourceTree = "<group>"; };
+		5EFB7CB5993B49588A37178C /* SpeakView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakView.swift; sourceTree = "<group>"; };
+		CADF772F7C41FE1CBDB1993E /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
+		3685E330EC5277A9DD5661C6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		E4E6D7EFB44C842A7A9609C6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		85673086EF6CFD3A1F8591AF /* Mimic.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mimic.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		69BE8A4D8E4D9DA4E7DB3928 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				817D16AC47A5A7B611E8D7B3 /* MimicKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		E50290A24C49A459B43487C5 = {
+			isa = PBXGroup;
+			children = (
+				958B6263A0B70C847CDA462B /* Sources */,
+				F82C405233B0537C3EF35AFC /* Resources */,
+				328EC33DF3954DC9B83FA285 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		958B6263A0B70C847CDA462B /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				7491CE01CE4BC4EF9B940627 /* MimicApp.swift */,
+				6842CB57FA6D015B4F45FF53 /* ModelDownload.swift */,
+				B8C787D59C8DCFE4670045AF /* RecordView.swift */,
+				6DD5977CFD59104608857DC8 /* Recorder.swift */,
+				5EFB7CB5993B49588A37178C /* SpeakView.swift */,
+				CADF772F7C41FE1CBDB1993E /* Store.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		F82C405233B0537C3EF35AFC /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				3685E330EC5277A9DD5661C6 /* Assets.xcassets */,
+				E4E6D7EFB44C842A7A9609C6 /* Info.plist */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		328EC33DF3954DC9B83FA285 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				85673086EF6CFD3A1F8591AF /* Mimic.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0E8A3AD980EC179856012B7E /* Mimic */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B483F6EB73610DE752E457A0;
+			buildPhases = (
+				4E57AE888889001C06A4F7E8,
+				69BE8A4D8E4D9DA4E7DB3928,
+				D6C9E8A172005E68A1DD674F,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = Mimic;
+			packageProductDependencies = (
+				05B4C13CEE8FCA4F3D850987 /* MimicKit */,
+			);
+			productName = Mimic;
+			productReference = 85673086EF6CFD3A1F8591AF /* Mimic.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		35FD55BB3686264FAE37A584 = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = 4FBF1E78770117BAFA792F9D;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = E50290A24C49A459B43487C5;
+			packageReferences = (
+				4B2C8A9ED36C04F6D64573E1 /* MimicKit */,
+			);
+			productRefGroup = 328EC33DF3954DC9B83FA285 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				0E8A3AD980EC179856012B7E /* Mimic */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D6C9E8A172005E68A1DD674F = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA400DFD4219F700A8EA7668 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4E57AE888889001C06A4F7E8 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7A143688C99925D1BE7A30C9 /* MimicApp.swift in Sources */,
+				2656953E4D047EA313D93A15 /* ModelDownload.swift in Sources */,
+				99701C37F6612DF6325BF005 /* RecordView.swift in Sources */,
+				6A12C84EDE82DE50A72D26BA /* Recorder.swift in Sources */,
+				882662D566DE4FC84D7B1EBD /* SpeakView.swift in Sources */,
+				D7FCDAA751F5C6E177E3CF5F /* Store.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		671D9E2E95809E27B85B6A20 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		AC5D6E15C21DCFD954DE2D0E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		5FD7CB20C3C0A7C4C28C16DB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.mimic.ios;
+				PRODUCT_NAME = Mimic;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AF694ED35853F54DD12B6EE6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.mimic.ios;
+				PRODUCT_NAME = Mimic;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4FBF1E78770117BAFA792F9D = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				671D9E2E95809E27B85B6A20 /* Debug */,
+				AC5D6E15C21DCFD954DE2D0E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B483F6EB73610DE752E457A0 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5FD7CB20C3C0A7C4C28C16DB /* Debug */,
+				AF694ED35853F54DD12B6EE6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		4B2C8A9ED36C04F6D64573E1 /* MimicKit */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../MimicKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		05B4C13CEE8FCA4F3D850987 /* MimicKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MimicKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 35FD55BB3686264FAE37A584 /* Project object */;
+}
