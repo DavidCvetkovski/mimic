@@ -56,6 +56,26 @@ public final class StreamPlayer: ObservableObject {
         return buffered >= needed || buffered >= total
     }
 
+    /// Roughly how long before there is enough banked to start playing.
+    ///
+    /// Not smart, and not meant to be: it is the arithmetic above run
+    /// backwards. Banking B seconds of a T-second passage takes B·r of wall
+    /// clock, and B is T(r−1)/r·margin, so the wait is about T(r−1)·margin —
+    /// capped at generating the whole thing, which is what happens when the
+    /// machine is slow enough that nothing can be played early.
+    ///
+    /// Wrong by a few seconds either way, which is fine. The point is that a
+    /// person watching a blank progress bar decides it is broken; a person
+    /// told "about 40 seconds" waits.
+    public nonisolated static func waitEstimate(
+        forSeconds duration: Double, realtimeFactor: Double, margin: Double = 1.35
+    ) -> Double {
+        let rate = max(realtimeFactor, 0.1)
+        guard rate > 1 else { return 0 }              // faster than real time
+        let banked = min(duration, duration * (rate - 1) / rate * margin)
+        return min(duration * rate, banked * rate)
+    }
+
     public func reset() {
         stop()
         buffered = 0

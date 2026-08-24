@@ -7,6 +7,9 @@ struct SpeakView: View {
     @Environment(\.colorScheme) private var scheme
     @FocusState private var writing: Bool
     @State private var recording = false
+    @StateObject private var writer = Writer()
+    @State private var askingFor = false
+    @State private var instruction = ""
 
     var body: some View {
         NavigationStack {
@@ -24,17 +27,8 @@ struct SpeakView: View {
                             .font(.custom("Iowan Old Style", size: 25, relativeTo: .title2))
                             .fixedSize(horizontal: false, vertical: true)
                         field
+                        suggestions
                         voicePicker
-
-                        if let problem = store.problem {
-                            Label(problem, systemImage: "exclamationmark.triangle")
-                                .font(.footnote).foregroundStyle(Palette.blood)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if !store.lastTiming.isEmpty && !store.isSpeaking {
-                            Text(store.lastTiming)
-                                .font(.caption).foregroundStyle(.tertiary).monospacedDigit()
-                        }
                     }
                     .padding(.horizontal, 22)
                     .padding(.top, 12)
@@ -68,6 +62,20 @@ struct SpeakView: View {
             }
             .sheet(isPresented: $recording) {
                 RecordView().environmentObject(store)
+            }
+            .alert("What should it say?", isPresented: $askingFor) {
+                TextField("a limerick about a cat who is late", text: $instruction)
+                Button("Cancel", role: .cancel) {}
+                Button("Write it") {
+                    let asked = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !asked.isEmpty else { return }
+                    Task {
+                        if let written = await writer.write(asked) { store.text = written }
+                    }
+                }
+            } message: {
+                Text("Written on this phone by the system model. "
+                     + "Nothing is sent anywhere.")
             }
         }
     }
@@ -106,6 +114,61 @@ struct SpeakView: View {
                 .padding(12)
                 .background(Palette.card(scheme))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.separator))
+        }
+    }
+
+    /// Something to say, for people who did not arrive with anything.
+    ///
+    /// The presets are the fastest path to hearing your own voice say something
+    /// you recognise, which is the moment the whole app is for.
+    private var suggestions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label2("OR TRY ONE OF THESE")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    if writer.readiness.isReady {
+                        Button {
+                            instruction = ""
+                            askingFor = true
+                        } label: {
+                            Label(writer.isWriting ? "Writing…" : "Write me one",
+                                  systemImage: "wand.and.stars")
+                                .font(.subheadline)
+                                .padding(.horizontal, 14).padding(.vertical, 9)
+                                .background(Palette.blood.opacity(0.12), in: Capsule())
+                                .foregroundStyle(Palette.blood)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(writer.isWriting || store.isSpeaking)
+                    }
+
+                    ForEach(Preset.all) { preset in
+                        Button {
+                            store.text = preset.text
+                            writing = false
+                        } label: {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(preset.label).font(.subheadline)
+                                Text(preset.source)
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 14).padding(.vertical, 7)
+                            .background(.quaternary, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(store.isSpeaking)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            if let why = writer.readiness.reason, writer.problem == nil {
+                Text(why).font(.caption2).foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let problem = writer.problem {
+                Text(problem).font(.caption2).foregroundStyle(Palette.blood)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -158,9 +221,30 @@ struct SpeakView: View {
                       && (store.selected == nil
                           || store.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
 
-            if !store.progress.isEmpty {
-                Text(store.progress).font(.caption).foregroundStyle(.secondary)
-            }
+            status
+        }
+    }
+
+    /// One line under the button, and only ever one.
+    ///
+    /// The error and the timing used to live at the end of the scroll view,
+    /// where the bar covered them at exactly the moment they had something to
+    /// say. Anything worth reading about a run belongs beside the controls for
+    /// that run, in the order you care about it: what went wrong, then how long
+    /// you are waiting, then where it has got to, then what it cost.
+    @ViewBuilder private var status: some View {
+        if let problem = store.problem {
+            Label(problem, systemImage: "exclamationmark.triangle")
+                .font(.caption).foregroundStyle(Palette.blood)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if !store.waitLabel.isEmpty {
+            Label(store.waitLabel, systemImage: "hourglass")
+                .font(.caption).foregroundStyle(Palette.blood)
+        } else if !store.progress.isEmpty {
+            Text(store.progress).font(.caption).foregroundStyle(.secondary)
+        } else if !store.lastTiming.isEmpty, !store.isSpeaking {
+            Text(store.lastTiming)
+                .font(.caption).foregroundStyle(.tertiary).monospacedDigit()
         }
     }
 
@@ -181,7 +265,13 @@ struct SpeakView: View {
             .disabled(store.player.buffered == 0)
 
             GeometryReader { geometry in
-                let total = max(store.player.buffered, store.estimate, 0.1)
+                // Once everything is made, the track is the audio — not the
+                // estimate. While the estimate was still in play the bar
+                // stopped a few percent short of the end, because position
+                // caps at what exists and the estimate had overshot it.
+                let total = store.player.isComplete
+                    ? max(store.player.buffered, 0.1)
+                    : max(store.player.buffered, store.estimate, 0.1)
                 ZStack(alignment: .leading) {
                     Capsule().fill(.quaternary)
                     Capsule().fill(Palette.blood).opacity(0.28)

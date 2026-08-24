@@ -146,7 +146,10 @@ struct ContentView: View {
             .disabled(player.buffered == 0)
 
             GeometryReader { geometry in
-                let total = max(player.buffered, estimate, 0.1)
+                // Once everything is made the track is the audio, not the
+                // estimate — otherwise the bar stops short of the end.
+                let total = player.isComplete ? max(player.buffered, 0.1)
+                                              : max(player.buffered, estimate, 0.1)
                 ZStack(alignment: .leading) {
                     Capsule().fill(.quaternary)
                     Capsule().fill(.tint).opacity(0.28)

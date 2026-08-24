@@ -350,7 +350,11 @@ function resetPlayer(){
 }
 
 function paintPlayer(){
-  const total = Math.max(audio.queued, audio.estimate, 0.1);
+  // Once everything is made the track is the audio, not the estimate —
+  // otherwise the bar stops a few percent short of the end.
+  const total = audio.done
+    ? Math.max(audio.queued, 0.1)
+    : Math.max(audio.queued, audio.estimate, 0.1);
   const played = playedSeconds();
   $('#made').style.right = `${Math.max(0, 100 - audio.queued / total * 100)}%`;
   $('#played').style.right = `${Math.max(0, 100 - played / total * 100)}%`;

@@ -29,6 +29,26 @@ final class Store: ObservableObject {
     @Published private(set) var lastTiming = ""
     /// How long the passage is expected to be, so the bar has a length.
     @Published private(set) var estimate: Double = 0
+    /// Seconds until there should be enough banked to start playing, counting
+    /// down. Empty once playback has begun.
+    @Published private(set) var waitLabel = ""
+
+    /// How slowly this device generated last time, remembered between launches.
+    ///
+    /// The wait estimate needs a rate before any of this run has happened, and
+    /// the only honest source is what this phone did before. A new install
+    /// guesses, is wrong once, and is right afterwards.
+    private var knownRealtimeFactor: Double {
+        get {
+            let stored = UserDefaults.standard.double(forKey: "realtimeFactor")
+            return stored > 0 ? stored : 3.0
+        }
+        set {
+            // Averaged with what we knew, so one unusual run does not throw it.
+            let blended = (knownRealtimeFactor + newValue) / 2
+            UserDefaults.standard.set(blended, forKey: "realtimeFactor")
+        }
+    }
     let player = StreamPlayer()
 
     /// SwiftUI observes this object, not the objects inside it. Without
@@ -124,8 +144,13 @@ final class Store: ObservableObject {
         problem = nil
         lastTiming = ""
         estimate = Runtime.estimate(words)
-        progress = "about \(Int(estimate))s of audio"
         player.reset()
+
+        // Tell them how long before they can press play, and count it down.
+        let wait = StreamPlayer.waitEstimate(forSeconds: estimate,
+                                             realtimeFactor: knownRealtimeFactor)
+        progress = "about \(Int(estimate.rounded()))s of audio"
+        startWaitCountdown(from: wait)
 
         let cancel = CancelBox()
         let rate = runtime.manifest.sampleRate
@@ -148,6 +173,7 @@ final class Store: ObservableObject {
                             self.player.append(chunk.samples, sampleRate: rate)
                             worstRtf = max(worstRtf, chunk.realtimeFactor)
                             self.progress = "sentence \(chunk.index + 1) of \(chunk.of)"
+                            if self.player.isPlaying { self.stopWaitCountdown() }
                             if !self.player.isPlaying,
                                StreamPlayer.shouldStart(
                                    buffered: self.player.buffered,
@@ -165,10 +191,12 @@ final class Store: ObservableObject {
                     self.player.isComplete = true
                     if !self.player.isPlaying { self.player.play() }
                     let elapsed = Date().timeIntervalSince(began)
+                    let measured = elapsed / max(self.player.buffered, 0.01)
+                    self.knownRealtimeFactor = measured      // for next time
+                    self.stopWaitCountdown()
                     self.lastTiming = String(
                         format: "%.1fs for %.1fs of audio · %.2f× real time",
-                        elapsed, self.player.buffered,
-                        elapsed / max(self.player.buffered, 0.01))
+                        elapsed, self.player.buffered, measured)
                 }
             } catch {
                 await MainActor.run { [weak self] in
@@ -180,8 +208,54 @@ final class Store: ObservableObject {
     }
 
     private var cancel: CancelBox?
+    private var countdown: Timer?
+
+    private func startWaitCountdown(from seconds: Double) {
+        countdown?.invalidate()
+        guard seconds > 1 else { waitLabel = ""; return }
+        let until = Date().addingTimeInterval(seconds)
+        waitLabel = Store.waitPhrase(seconds)
+        countdown = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // It stops the moment there is sound, however the estimate did.
+                if self.player.isPlaying || !self.isSpeaking {
+                    self.stopWaitCountdown()
+                    return
+                }
+                let left = until.timeIntervalSinceNow
+                guard left > 0 else {
+                    // The estimate has been spent and there is still no sound.
+                    // "Any moment now" would sit there indefinitely saying
+                    // nothing, so hand the line back to the sentence count,
+                    // which is not a guess and does not stop moving.
+                    self.stopWaitCountdown()
+                    return
+                }
+                self.waitLabel = Store.waitPhrase(left)
+            }
+        }
+    }
+
+    private func stopWaitCountdown() {
+        countdown?.invalidate()
+        countdown = nil
+        waitLabel = ""
+    }
+
+    /// Deliberately vague. A countdown to the second invites people to notice
+    /// when it is wrong, and it will be.
+    static func waitPhrase(_ seconds: Double) -> String {
+        switch seconds {
+        case ..<10:  return "playing in a few seconds"
+        case ..<25:  return "playing in about \(Int((seconds / 5).rounded()) * 5) seconds"
+        case ..<70:  return "playing in about \(Int((seconds / 10).rounded()) * 10) seconds"
+        default:     return "playing in a minute or two"
+        }
+    }
 
     func stopSpeaking() {
+        stopWaitCountdown()
         cancel?.cancel()
         task?.cancel()
         task = nil

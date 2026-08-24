@@ -284,3 +284,78 @@ final class BufferingTests: XCTestCase {
         }
     }
 }
+
+/// The countdown shown before there is any sound.
+///
+/// It is a promise, and the only way it can be a bad one is by being early:
+/// a bar that says five seconds and takes twenty is worse than no bar. So the
+/// property under test is not accuracy but direction — it may overshoot, and
+/// it may never undershoot when `shouldStart` is the thing that actually
+/// decides.
+final class WaitEstimateTests: XCTestCase {
+
+    func testNoWaitWhenGenerationOutrunsPlayback() {
+        // Faster than real time: it can start on the first chunk and will only
+        // get further ahead. There is nothing to count down.
+        XCTAssertEqual(StreamPlayer.waitEstimate(forSeconds: 30, realtimeFactor: 0.8), 0)
+        XCTAssertEqual(StreamPlayer.waitEstimate(forSeconds: 30, realtimeFactor: 1.0), 0)
+    }
+
+    func testNeverLongerThanMakingAllOfIt() {
+        // Waiting for the whole render is the worst case by definition; a
+        // countdown longer than that is describing something that cannot happen.
+        for factor in [1.2, 2.0, 5.0, 20.0] {
+            for duration in [2.0, 13.0, 60.0] {
+                let wait = StreamPlayer.waitEstimate(forSeconds: duration,
+                                                     realtimeFactor: factor)
+                XCTAssertLessThanOrEqual(wait, duration * factor + 0.001,
+                    "\(factor)x on \(duration)s promised longer than the whole render")
+                XCTAssertGreaterThanOrEqual(wait, 0)
+            }
+        }
+    }
+
+    func testSlowerGenerationMeansALongerWait() {
+        var previous = 0.0
+        for factor in [1.1, 1.5, 2.0, 3.0, 6.0] {
+            let wait = StreamPlayer.waitEstimate(forSeconds: 20, realtimeFactor: factor)
+            XCTAssertGreaterThan(wait, previous, "\(factor)x did not wait longer")
+            previous = wait
+        }
+    }
+
+    /// The one that matters: the estimate and `shouldStart` must agree about
+    /// the same run, or the countdown reaches zero while nothing is playing.
+    ///
+    /// They cannot agree exactly. The estimate models a continuous stream;
+    /// audio arrives a whole sentence at a time, so playback begins at the
+    /// first sentence boundary past the threshold rather than at the threshold.
+    /// The countdown can therefore be early — but only by the time it takes to
+    /// render one sentence, which is the bound asserted here. Anything worse
+    /// than that would be the arithmetic disagreeing, not the granularity.
+    func testItIsNeverEarlyByMoreThanOneSentence() throws {
+        for factor in [1.1, 1.4, 2.0, 3.0, 5.0] {
+            let total = 20.0
+            let step = 0.5                       // a sentence's worth at a time
+            var banked = 0.0
+            var wallClock = 0.0
+            var began: Double?
+
+            while banked < total, began == nil {
+                banked += step
+                wallClock += step * factor
+                if StreamPlayer.shouldStart(buffered: banked, estimate: total,
+                                            realtimeFactor: factor) {
+                    began = wallClock
+                }
+            }
+
+            let actual = try XCTUnwrap(began, "never started at \(factor)x")
+            let promised = StreamPlayer.waitEstimate(forSeconds: total,
+                                                     realtimeFactor: factor)
+            XCTAssertGreaterThanOrEqual(promised, actual - step * factor - 0.001,
+                "at \(factor)x the countdown hit zero \(actual - promised)s early, "
+                + "more than the \(step * factor)s one sentence takes")
+        }
+    }
+}
