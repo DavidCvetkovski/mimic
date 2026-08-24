@@ -1,4 +1,5 @@
 import Foundation
+import Hub
 import Tokenizers
 import OnnxRuntimeBindings
 
@@ -22,18 +23,13 @@ public final class Runtime {
     public let manifest: Manifest
     public let voices: VoiceStore
 
-    private let environment: ORTEnv
-    private let slow: ORTSession
-    private let fast: ORTSession
-    private let decoder: ORTSession
+    private let environment: ORT.Env
+    private let slow: ORT.Session
+    private let fast: ORT.Session
+    private let decoder: ORT.Session
     private let prompts: PromptBuilder
 
-    /// Output names, read once. Every step asks for all of them, and building
-    /// the array per call showed up in profiles.
-    private let slowOutputs: [String]
-    private let fastOutputs: [String]
-
-    public init(modelDirectory: URL, voicesDirectory: URL, threads: Int = 4) async throws {
+    public init(modelDirectory: URL, voicesDirectory: URL, threads: Int = 4) throws {
         guard FileManager.default.fileExists(
             atPath: modelDirectory.appending(path: "runtime_manifest.json").path) else {
             throw MimicError.modelMissing("no runtime_manifest.json in \(modelDirectory.path)")
@@ -41,31 +37,46 @@ public final class Runtime {
         manifest = try Manifest.load(from: modelDirectory)
         voices = VoiceStore(root: voicesDirectory, numCodebooks: manifest.numCodebooks)
 
-        environment = try ORTEnv(loggingLevel: .warning)
-        let options = try ORTSessionOptions()
-        try options.setLogSeverityLevel(.error)
-        try options.setIntraOpNumThreads(Int32(threads))
-        try options.setGraphOptimizationLevel(.all)
-
-        func session(_ name: String) throws -> ORTSession {
+        environment = try ORT.Env()
+        let env = environment
+        func session(_ name: String) throws -> ORT.Session {
             let path = modelDirectory.appending(path: name).path
             guard FileManager.default.fileExists(atPath: path) else {
                 throw MimicError.modelMissing(name)
             }
-            return try ORTSession(env: environment, modelPath: path, sessionOptions: options)
+            return try ORT.Session(env: env, path: path, threads: threads)
         }
         slow = try session("slow_ar_int4.onnx")
         fast = try session("fast_ar_int4.onnx")
         decoder = try session("codec_decoder_fp16.onnx")
 
-        slowOutputs = try slow.outputNames()
-        fastOutputs = try fast.outputNames()
-
-        let tokenizerFile = modelDirectory.appending(path: "tokenizer/tokenizer.json")
         prompts = PromptBuilder(
-            tokenizer: try await Tokenizer.from(tokenizerFile: tokenizerFile),
+            tokenizer: try Runtime.loadTokenizer(from: modelDirectory),
             semanticBeginID: manifest.semanticBeginID,
             numCodebooks: manifest.numCodebooks)
+    }
+
+    /// Load the tokenizer that ships beside the weights.
+    ///
+    /// swift-transformers expects a tokenizer_config.json alongside
+    /// tokenizer.json, and the export ships only the latter. The stand-in below
+    /// names Qwen2Tokenizer, which is what this vocabulary is — 151,643 entries
+    /// with Qwen's control tokens — and which swift-transformers maps to its
+    /// byte-level BPE. Naming it is not optional: the loader refuses a config
+    /// without a tokenizer_class rather than guessing.
+    ///
+    /// Using the shipped tokenizer.json rather than reimplementing the vocabulary
+    /// is the whole point — the two sides cannot then disagree about what a
+    /// prompt tokenises to, and the test suite checks that they do not.
+    static func loadTokenizer(from modelDirectory: URL) throws -> any Tokenizer {
+        let file = modelDirectory.appending(path: "tokenizer/tokenizer.json")
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            throw MimicError.modelMissing("tokenizer/tokenizer.json")
+        }
+        let data = try JSONDecoder().decode(Config.self, from: Data(contentsOf: file))
+        let stand_in = #"{"tokenizer_class": "Qwen2Tokenizer"}"#
+        let config = try JSONDecoder().decode(Config.self, from: Data(stand_in.utf8))
+        return try AutoTokenizer.from(tokenizerConfig: config, tokenizerData: data)
     }
 
     // MARK: - Generation
@@ -156,14 +167,11 @@ public final class Runtime {
                 flat[book * frames.count + index] = Int64(frame[book])
             }
         }
-        let input = try Tensor.int64(flat, shape: [1, codebooks, frames.count])
-        let outputs = try decoder.run(withInputs: ["codes": input],
-                                      outputNames: Set(try decoder.outputNames()),
-                                      runOptions: nil)
-        guard let audio = outputs.values.first else {
+        let input = try ORT.Value.int64(flat, shape: [1, codebooks, frames.count])
+        guard let audio = try decoder.run(["codes": input]).first else {
             throw MimicError.inference("the decoder returned nothing")
         }
-        return try Tensor.asFloats(audio)
+        return audio.floats()
     }
 
     public func synthesize(text: String, voice: String,
@@ -178,65 +186,58 @@ public final class Runtime {
     /// Returns the logits for the last position, and its hidden state.
     private func slowStep(codes: [Int64], shape: [Int], positions: [Int],
                           cache: inout KVCache) throws -> ([Float], [Float16]) {
-        var inputs: [String: ORTValue] = [
-            "codes": try Tensor.int64(codes, shape: shape),
-            "input_pos": try Tensor.int64(positions.map(Int64.init),
+        var inputs: [String: ORT.Value] = [
+            "codes": try ORT.Value.int64(codes, shape: shape),
+            "input_pos": try ORT.Value.int64(positions.map(Int64.init),
                                           shape: [positions.count]),
         ]
         for layer in 0..<manifest.numLayers {
             inputs["cache_key_\(layer)"] = try cache.value(at: 2 * layer)
             inputs["cache_value_\(layer)"] = try cache.value(at: 2 * layer + 1)
         }
-        let outputs = try slow.run(withInputs: inputs,
-                                   outputNames: Set(slowOutputs), runOptions: nil)
+        let outputs = try slow.run(inputs)
 
         // The first two outputs are logits and hidden state; the rest are the
         // cache slices for the positions just processed, in layer order.
-        guard let logitsValue = outputs[slowOutputs[0]],
-              let hiddenValue = outputs[slowOutputs[1]] else {
-            throw MimicError.inference("the slow branch returned no logits")
+        guard outputs.count >= 2 + manifest.numLayers * 2 else {
+            throw MimicError.inference("the slow branch returned \(outputs.count) outputs")
         }
         for layer in 0..<(manifest.numLayers * 2) {
-            guard let delta = outputs[slowOutputs[2 + layer]] else { continue }
             cache.update(index: layer, positions: positions,
-                         delta: try Tensor.float16s(delta))
+                         delta: outputs[2 + layer].float16s())
         }
 
-        let logits = try Tensor.asFloats(logitsValue)
-        let logitsShape = try Tensor.shape(logitsValue)
-        let width = logitsShape.last ?? logits.count
-        let lastRow = Array(logits.suffix(width))
-
-        let hidden = try Tensor.float16s(hiddenValue)
-        let hiddenShape = try Tensor.shape(hiddenValue)
-        let hiddenWidth = hiddenShape.last ?? hidden.count
-        return (lastRow, Array(hidden.suffix(hiddenWidth)))
+        // Only the last position matters: the rest is prompt the model has
+        // already been told about.
+        let logits = outputs[0].floats()
+        let width = outputs[0].shape.last ?? logits.count
+        let hidden = outputs[1].float16s()
+        let hiddenWidth = outputs[1].shape.last ?? hidden.count
+        return (Array(logits.suffix(width)), Array(hidden.suffix(hiddenWidth)))
     }
 
     private func fastStep(hidden: [Float16], token: Int, useHidden: Bool,
                           position: Int, cache: inout KVCache) throws -> [Float] {
-        var inputs: [String: ORTValue] = [
-            "slow_hidden": try Tensor.float16(hidden, shape: [1, 1, hidden.count]),
-            "token_id": try Tensor.int64([Int64(token)], shape: [1, 1]),
-            "use_slow_hidden": try Tensor.bool([useHidden], shape: [1]),
-            "input_pos": try Tensor.int64([Int64(position)], shape: [1]),
+        var inputs: [String: ORT.Value] = [
+            "slow_hidden": try ORT.Value.float16(hidden, shape: [1, 1, hidden.count]),
+            "token_id": try ORT.Value.int64([Int64(token)], shape: [1, 1]),
+            "use_slow_hidden": try ORT.Value.bool([useHidden], shape: [1]),
+            "input_pos": try ORT.Value.int64([Int64(position)], shape: [1]),
         ]
         for layer in 0..<manifest.numFastLayers {
             inputs["cache_key_\(layer)"] = try cache.value(at: 2 * layer)
             inputs["cache_value_\(layer)"] = try cache.value(at: 2 * layer + 1)
         }
-        let outputs = try fast.run(withInputs: inputs,
-                                   outputNames: Set(fastOutputs), runOptions: nil)
-        guard let logitsValue = outputs[fastOutputs[0]] else {
-            throw MimicError.inference("the fast branch returned no logits")
+        let outputs = try fast.run(inputs)
+        guard outputs.count >= 1 + manifest.numFastLayers * 2 else {
+            throw MimicError.inference("the fast branch returned \(outputs.count) outputs")
         }
         for layer in 0..<(manifest.numFastLayers * 2) {
-            guard let delta = outputs[fastOutputs[1 + layer]] else { continue }
             cache.update(index: layer, positions: [position],
-                         delta: try Tensor.float16s(delta))
+                         delta: outputs[1 + layer].float16s())
         }
-        let logits = try Tensor.asFloats(logitsValue)
-        let width = (try Tensor.shape(logitsValue)).last ?? logits.count
+        let logits = outputs[0].floats()
+        let width = outputs[0].shape.last ?? logits.count
         return Array(logits.suffix(width))
     }
 

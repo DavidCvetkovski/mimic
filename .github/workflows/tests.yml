@@ -36,16 +36,36 @@ jobs:
         # and reformatting them would make re-syncing upstream painful.
       - run: ruff check core tests --exclude core/vendor
 
-  macos-app:
-    # The Swift app only builds on a Mac, so it gets a runner of its own. This
-    # compiles the bundle; it does not launch it.
-    runs-on: macos-14
+  swift:
+    # The Swift half only builds on a Mac. This compiles all three targets —
+    # the engine for macOS and for iOS, the Mac app, and the iPhone app. It
+    # does not run them: the parity tests need the model, which is a gigabyte,
+    # and they skip when it is absent.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Build Mimic.app
-        run: ./macos/build.sh
-      - name: The bundle is complete
+
+      - name: The engine, for macOS
+        run: swift build --package-path MimicKit
+
+      - name: The engine, for iOS
         run: |
+          xcodebuild -scheme MimicKit \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath /tmp/dd build | tail -3
+
+      - name: The Mac app
+        run: |
+          ./macos/build.sh
           test -x macos/build/Mimic.app/Contents/MacOS/Mimic
-          test -f macos/build/Mimic.app/Contents/Info.plist
+          test -f macos/build/Mimic.app/Contents/Resources/Mimic.icns
           codesign --verify --verbose macos/build/Mimic.app
+
+      - name: The iPhone app
+        run: |
+          xcodebuild -project ios/Mimic.xcodeproj -scheme Mimic \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath /tmp/ios-dd build | tail -3
+
+      - name: The Swift tests run (and skip cleanly without the model)
+        run: swift test --package-path MimicKit 2>&1 | tail -5

@@ -10,9 +10,11 @@ import PackageDescription
 // is wrong in ways only a comparison against the original will reveal.
 let package = Package(
     name: "MimicKit",
-    platforms: [.iOS(.v16), .macOS(.v14)],
+    platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
         .library(name: "MimicKit", targets: ["MimicKit"]),
+        // A way to run the engine on a Mac, where it can be timed and compared.
+        .executable(name: "mimic-speak", targets: ["mimic-speak"]),
     ],
     dependencies: [
         // 1.20 is the floor: the INT4 models use the GatherBlockQuantized
@@ -25,12 +27,20 @@ let package = Package(
                  from: "1.3.3"),
     ],
     targets: [
+        // A module map around ONNX Runtime's C API — see its umbrella header.
+        .target(name: "MimicORT",
+                dependencies: [
+                    .product(name: "onnxruntime",
+                             package: "onnxruntime-swift-package-manager"),
+                ]),
         .target(name: "MimicKit",
                 dependencies: [
+                    "MimicORT",
                     .product(name: "onnxruntime",
                              package: "onnxruntime-swift-package-manager"),
                     .product(name: "Tokenizers", package: "swift-transformers"),
                 ]),
+        .executableTarget(name: "mimic-speak", dependencies: ["MimicKit"]),
         .testTarget(name: "MimicKitTests", dependencies: ["MimicKit"]),
     ]
 )

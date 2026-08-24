@@ -19,6 +19,7 @@ swiftc -O -parse-as-library -target "$TARGET" \
     "$HERE"/Sources/*.swift
 
 cp "$HERE/Resources/Info.plist" "$APP/Contents/Info.plist"
+cp "$HERE/Resources/Mimic.icns" "$APP/Contents/Resources/Mimic.icns"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # Ad-hoc signature. Without one, macOS refuses to hand the app a microphone —

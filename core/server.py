@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -73,6 +74,13 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             return self.send_web("index.html", "text/html; charset=utf-8")
+        if path.startswith("/assets/"):
+            name = path.split("/")[-1]
+            kinds = {".svg": "image/svg+xml", ".png": "image/png"}
+            kind = kinds.get(os.path.splitext(name)[1])
+            if kind and "/" not in name and ".." not in name:
+                return self.send_web("assets/" + name, kind)
+            return self.fail(404, "not found")
         if path == "/api/health":
             return self.reply(200, {
                 "ok": True,

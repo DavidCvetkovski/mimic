@@ -28,7 +28,12 @@ struct KVCache {
     mutating func update(index: Int, positions: [Int], delta: [Float16]) {
         let count = positions.count
         guard count > 0, delta.count >= heads * count * dim else { return }
-        buffers[index].withUnsafeMutableBufferPointer { cache in
+        // Moved out of `buffers` for the duration: writing through a pointer
+        // into an array while that array is also the receiver is an
+        // exclusivity violation, and the compiler is right to refuse it.
+        var buffer = buffers[index]
+        buffers[index] = []
+        buffer.withUnsafeMutableBufferPointer { cache in
             delta.withUnsafeBufferPointer { source in
                 for head in 0..<heads {
                     let cacheHead = head * sequence * dim
@@ -43,9 +48,10 @@ struct KVCache {
                 }
             }
         }
+        buffers[index] = buffer
     }
 
-    func value(at index: Int) throws -> ORTValue {
-        try Tensor.float16(buffers[index], shape: shape)
+    func value(at index: Int) throws -> ORT.Value {
+        try ORT.Value.float16(buffers[index], shape: shape)
     }
 }

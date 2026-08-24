@@ -13,3 +13,6 @@ DerivedData/
 
 # Swift package build products
 .build/
+.build/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
