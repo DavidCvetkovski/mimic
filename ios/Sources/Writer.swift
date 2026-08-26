@@ -66,20 +66,31 @@ final class Writer: ObservableObject {
         // brackets — none of which can be spoken. This asks for something a
         // person could read out.
         let session = LanguageModelSession(instructions: """
-            You write short passages to be read aloud in someone's own voice.
+            You write short pieces of text for someone to hear read aloud.
 
             Write only the words to be spoken. No headings, no bullet points, \
-            no stage directions, no notes about what you have written, and no \
-            quotation marks around the whole thing. Use ordinary punctuation, \
-            because it is what tells the voice where to breathe.
+            no stage directions, no preamble, and no note about what you have \
+            written. Use ordinary punctuation — it is what tells a synthetic \
+            voice where to breathe.
 
-            Keep it under about eighty words unless asked for more. Write it so \
-            it sounds like someone talking, not like a document.
+            Poems and verse are welcome; keep their line breaks. Anything else, \
+            write the way a person talks rather than the way a document reads. \
+            Around eighty words unless more is asked for.
             """)
         do {
             let response = try await session.respond(to: instruction)
             let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty ? nil : Writer.spoken(text)
+            guard !text.isEmpty else { return nil }
+            // A refusal comes back as an ordinary reply, not an error, so
+            // without this "I can't help with that" was pasted into the box and
+            // then read aloud in your own voice, which is a strange thing to
+            // hear yourself say.
+            guard !Writer.isRefusal(text) else {
+                problem = "The system model would not write that one. "
+                        + "Try asking differently, or use one of the passages."
+                return nil
+            }
+            return Writer.spoken(text)
         } catch {
             problem = error.localizedDescription
             return nil
@@ -87,6 +98,19 @@ final class Writer: ObservableObject {
         #else
         return nil
         #endif
+    }
+
+    /// Apple's model declines by replying rather than by failing.
+    ///
+    /// Only short replies are considered: a long passage that happens to open
+    /// with "I cannot" is a passage, not a refusal, and pieces that begin that
+    /// way are exactly the sort of thing people ask for.
+    static func isRefusal(_ text: String) -> Bool {
+        let opening = text.prefix(60).lowercased()
+        guard text.count < 200 else { return false }
+        return ["i can't", "i cannot", "i can not", "i'm unable", "i am unable",
+                "i won't", "i will not", "sorry, i", "i'm sorry", "i am sorry"]
+            .contains { opening.hasPrefix($0) }
     }
 
     /// Tidy what came back into something the voice can read.
@@ -103,7 +127,7 @@ final class Writer: ObservableObject {
         return cleaned.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-            .joined(separator: " ")
+            .joined(separator: "\n")
     }
 }
 

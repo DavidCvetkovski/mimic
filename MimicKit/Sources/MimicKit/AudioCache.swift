@@ -19,13 +19,30 @@ public final class AudioCache: @unchecked Sendable {
     private let limit: Int
     private let lock = NSLock()
 
+    /// Bumped whenever a change makes audio already on disk wrong.
+    ///
+    /// The splitter shipped in a state where a passage mixing short and long
+    /// sentences could be spoken out of order, and the cache faithfully kept
+    /// the result — so fixing the splitter was not enough, because the wrong
+    /// audio would still be handed back. A cache able to serve the output of a
+    /// fixed bug is worse than no cache at all.
+    public static let version = "2"
+
     /// - Parameter limitMB: how much disk to spend before the least recently
     ///   used entries are dropped. 200 MB is a little over fifteen minutes of
     ///   speech, which is far more than anyone replays.
-    public init(directory: URL, limitMB: Int = 200) {
+    public init(directory: URL, limitMB: Int = 200, version: String = AudioCache.version) {
         self.directory = directory
         self.limit = limitMB * 1_024 * 1_024
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let marker = directory.appending(path: "VERSION")
+        let found = (try? String(contentsOf: marker, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if found != version {
+            empty()
+            try? version.write(to: marker, atomically: true, encoding: .utf8)
+        }
     }
 
     /// `voice-digest.wav` — the voice up front so that forgetting one voice is
@@ -99,7 +116,7 @@ public final class AudioCache: @unchecked Sendable {
 
         var entries: [(url: URL, date: Date, size: Int)] = []
         var total = 0
-        for file in files {
+        for file in files where file.pathExtension == "wav" {
             guard let values = try? file.resourceValues(forKeys: Set(keys)),
                   let size = values.fileSize else { continue }
             entries.append((file, values.contentModificationDate ?? .distantPast, size))

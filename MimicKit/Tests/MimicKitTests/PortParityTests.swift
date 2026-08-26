@@ -199,6 +199,41 @@ final class ChunkingTests: XCTestCase {
         XCTAssertTrue(Runtime.split("   ").isEmpty)
     }
 
+    /// The one that got out. A short sentence followed by one over the limit:
+    /// the long one is broken into fragments, and those were emitted while the
+    /// short sentence was still waiting in the packing buffer for company — so
+    /// it was spoken *after* them. Every word still survived, which is exactly
+    /// why a round trip over short sentences never noticed.
+    func testAShortSentenceKeepsItsPlaceBeforeALongOne() {
+        let text = "To be, or not to be, that is the question. "
+            + "Whether it is nobler in the mind to suffer the slings and arrows of "
+            + "outrageous fortune, or to take arms against a sea of troubles, and by "
+            + "opposing, end them."
+        let parts = Runtime.split(text, limit: 110)
+        XCTAssertTrue(parts[0].hasPrefix("To be, or not to be"),
+                      "the first sentence was not spoken first — got: \(parts[0])")
+        XCTAssertEqual(parts.joined(separator: " "), text)
+    }
+
+    /// Order, over shapes and limits, not merely that no word went missing.
+    func testTheOrderIsTheOrderItWasWrittenIn() {
+        let long = String(repeating: "word ", count: 60)
+        let texts = [
+            "Short one. " + long + "end.",
+            long + "end. Short one.",
+            "A one. B two. " + long + "C three. D four.",
+            "Tiny. " + long + "middle bit. " + long + "last.",
+        ]
+        for text in texts {
+            let flattened = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            for limit in [40, 70, 110] {
+                XCTAssertEqual(Runtime.split(text, limit: limit).joined(separator: " "),
+                               flattened,
+                               "limit \(limit) reordered or dropped: \(text.prefix(40))…")
+            }
+        }
+    }
+
     /// Measured against real output: the fit is within about 1.3s over a
     /// twenty-second line, and the apps rely on it to decide when to start.
     func testTheEstimateTracksMeasuredDurations() {

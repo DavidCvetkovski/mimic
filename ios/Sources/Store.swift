@@ -23,7 +23,17 @@ final class Store: ObservableObject {
 
     @Published private(set) var stage: Stage = .checking
     @Published private(set) var voices: [String] = []
-    @Published var selected: String?
+    /// Changing voice throws away whatever was made in the old one.
+    ///
+    /// Otherwise the transport still holds the previous voice's audio under the
+    /// new voice's name, and play and "Speak it" do different things — the same
+    /// confusion the Mac's save button had, in a different place.
+    @Published var selected: String? {
+        didSet {
+            guard oldValue != selected, oldValue != nil else { return }
+            discardAudio()
+        }
+    }
     @Published private(set) var isSpeaking = false
     @Published private(set) var progress = ""
     @Published private(set) var lastTiming = ""
@@ -178,7 +188,19 @@ final class Store: ObservableObject {
                 try await Task.detached(priority: .userInitiated) {
                     try runtime.synthesizeStream(text: words, voice: voice,
                                                  options: options) { chunk in
-                        Task { @MainActor [weak self] in
+                        // Ordered, deliberately.
+                        //
+                        // This was `Task { @MainActor in … }`, and unstructured
+                        // tasks are scheduled rather than queued, so nothing
+                        // promises that sentence one reaches the player before
+                        // sentence two. In practice sentences arrive seconds
+                        // apart and it never bit — the passage that did come
+                        // out shuffled was Runtime.split's doing, not this —
+                        // but a queue of audio buffers should not depend on
+                        // that. The main queue is ordered and is the main
+                        // actor's executor, which gets both properties.
+                        DispatchQueue.main.async { [weak self] in
+                            MainActor.assumeIsolated {
                             guard let self else { return }
                             self.player.append(chunk.samples, sampleRate: rate)
                             if chunk.cached { fromCache = true }
@@ -191,6 +213,7 @@ final class Store: ObservableObject {
                                    estimate: max(self.estimate, self.player.buffered),
                                    realtimeFactor: worstRtf) {
                                 self.player.play()
+                            }
                             }
                         }
                         return !cancel.isCancelled
@@ -270,6 +293,20 @@ final class Store: ObservableObject {
         case ..<70:  return "playing in about \(Int((seconds / 10).rounded()) * 10) seconds"
         default:     return "playing in a minute or two"
         }
+    }
+
+    /// Stop, and forget: the transport goes away rather than sitting at zero
+    /// describing audio that is no longer there.
+    private func discardAudio() {
+        cancel?.cancel()
+        task?.cancel()
+        task = nil
+        stopWaitCountdown()
+        player.reset()
+        isSpeaking = false
+        progress = ""
+        lastTiming = ""
+        problem = nil
     }
 
     func stopSpeaking() {

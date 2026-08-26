@@ -42,6 +42,11 @@ SECONDS_BASE = 0.089
 # Cached audio is small but unbounded, and a long-lived app would accumulate it
 # forever. Trimmed oldest-first once it passes this.
 CACHE_LIMIT_MB = 200
+# Bumped whenever a change makes audio already on disk wrong. split_sentences
+# shipped in a state where a passage mixing short and long sentences came out
+# in the wrong order, and the cache kept the result — so fixing the splitter
+# was not enough on its own.
+CACHE_VERSION = "2"
 
 # The reference implementation wants every model file in one flat directory;
 # a Hugging Face snapshot puts the voice-registration encoder in a subfolder.
@@ -97,6 +102,7 @@ class Engine:
         self._lock = threading.Lock()          # generation is not reentrant
         for directory in (VOICES_DIR, CACHE_DIR):
             directory.mkdir(parents=True, exist_ok=True)
+        _discard_stale_cache()
         threading.Thread(target=self._reaper, daemon=True).start()
 
     # ---- the model itself ----
@@ -338,6 +344,14 @@ def split_sentences(text: str, limit: int = 110) -> list[str]:
     parts, current = [], ""
     for piece in re.split(r"(?<=[.!?;:])\s+", " ".join(str(text).split())):
         while len(piece) > limit:                     # one very long clause
+            # Whatever is already buffered comes first. Without this the
+            # fragments of a long sentence were appended straight to the output
+            # while an earlier, shorter sentence was still waiting in `current`
+            # for company — so it was spoken after them, and the passage came
+            # out in the wrong order.
+            if current:
+                parts.append(current)
+                current = ""
             cut = piece.rfind(" ", 0, limit)
             if cut <= 0:
                 cut = limit
@@ -351,6 +365,19 @@ def split_sentences(text: str, limit: int = 110) -> list[str]:
     if current:
         parts.append(current)
     return [p for p in parts if p] or [text]
+
+
+def _discard_stale_cache(version: str = CACHE_VERSION):
+    """Throw the cache away when it may hold audio a later fix invalidated."""
+    marker = CACHE_DIR / "VERSION"
+    try:
+        if marker.is_file() and marker.read_text().strip() == version:
+            return
+        for path in CACHE_DIR.glob("*.wav"):
+            path.unlink(missing_ok=True)
+        marker.write_text(version)
+    except OSError:
+        pass
 
 
 def _prune_cache(limit_mb: int = CACHE_LIMIT_MB):

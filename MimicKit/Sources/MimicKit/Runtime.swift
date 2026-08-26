@@ -336,6 +336,15 @@ public final class Runtime {
         var packed = ""
         for var sentence in sentences {
             while sentence.count > limit {         // one very long clause
+                // Whatever is already packed comes first. Without this the
+                // fragments of a long sentence were appended straight to the
+                // output while an earlier, shorter sentence was still sitting
+                // in `packed` waiting for company — so it came out afterwards,
+                // and the passage was spoken in the wrong order.
+                if !packed.isEmpty {
+                    parts.append(packed)
+                    packed = ""
+                }
                 let cut = sentence.prefix(limit).lastIndex(of: " ")
                     ?? sentence.index(sentence.startIndex, offsetBy: limit)
                 parts.append(String(sentence[..<cut]).trimmingCharacters(in: .whitespaces))
