@@ -52,6 +52,17 @@ Open <http://127.0.0.1:8455>, read the paragraph aloud, and type something.
 open ios/Mimic.xcodeproj                           # the iPhone app
 swift run -c release --package-path MimicKit mimic-speak "hello" --voice David
 ```
+Running on a real phone needs a development team, and a team ID is personal, so
+it is not in the repository. Put yours in `ios/Local.xcconfig`, which is not
+tracked:
+
+```
+DEVELOPMENT_TEAM = ABCDE12345
+```
+
+Without it the project still opens and runs in the simulator. **Build Release**
+for anything you intend to listen to — the engine is Swift doing a great deal of
+arithmetic per frame, and a Debug build of it runs about twice as slow.
 
 ## What it costs
 

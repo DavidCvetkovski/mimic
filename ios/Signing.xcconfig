@@ -1,0 +1,14 @@
+// Signing, without anybody's team ending up in the repository.
+//
+// Building for a real device needs a development team, and a team ID is
+// personal: committed, it leaks one and breaks the build for everyone else,
+// who would be told to sign as somebody they are not.
+//
+// So put yours in ios/Local.xcconfig, which is not tracked:
+//
+//     DEVELOPMENT_TEAM = ABCDE12345
+//
+// Xcode shows it under Signing & Capabilities once it is there. The `?` means
+// a checkout without one still opens, builds and runs in the simulator — only
+// installing on a phone needs a team.
+#include? "Local.xcconfig"

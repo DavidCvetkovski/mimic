@@ -16,3 +16,6 @@ DerivedData/
 .build/
 *.xcodeproj/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Personal signing team — see ios/Signing.xcconfig
+ios/Local.xcconfig
