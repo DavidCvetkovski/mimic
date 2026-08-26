@@ -577,3 +577,73 @@ final class AuthorTests: XCTestCase {
         XCTAssertEqual(text, truth.text, "the writer diverged from the reference")
     }
 }
+
+/// Tidying model output, and spotting a refusal.
+///
+/// These lived in the app target, which has no tests, and the consequence
+/// reached a phone: a refusal was pasted into the box and read aloud in
+/// somebody's own voice. They are pure functions over strings and there was
+/// never a reason for them to be somewhere they could not be checked.
+final class ProseTests: XCTestCase {
+
+    /// The one that got through. It differs from the pattern it should have
+    /// matched by a single character — a typographic apostrophe.
+    func testTheRefusalThatReachedAPhone() {
+        let real = "I\u{2019}m sorry, I can\u{2019}t write a poem. My primary function "
+                 + "is to generate text that can be listened to aloud. Is there "
+                 + "anything else I can assist you with?"
+        XCTAssertTrue(Prose.isRefusal(real))
+        // And the same words with the apostrophe a keyboard would type.
+        XCTAssertTrue(Prose.isRefusal(real.replacingOccurrences(of: "\u{2019}", with: "'")))
+    }
+
+    func testOtherWaysOfDeclining() {
+        for refusal in [
+            "I can't help with that.",
+            "I\u{2019}m unable to assist with this request.",
+            "Sorry, I can't create that kind of content.",
+            "Unfortunately, I am not able to write that.",
+            "As an AI, I don't write poetry.",
+            "Of course! Actually, I cannot write that.",
+        ] {
+            XCTAssertTrue(Prose.isRefusal(refusal), "missed: \(refusal)")
+        }
+    }
+
+    /// The expensive mistake in the other direction: throwing away a passage
+    /// because of the words in it.
+    func testWritingIsNotARefusal() {
+        for passage in [
+            "The rain fell on the windowpane, and the man did not hear it.",
+            "I can't believe how bright the morning is, she said, laughing.",
+            "Happy birthday! I couldn't have asked for a better friend.",
+            "To be, or not to be, that is the question.",
+            // Long enough to be a piece of writing whatever it opens with.
+            String(repeating: "I cannot say how glad I am to be here today. ", count: 12),
+        ] {
+            XCTAssertFalse(Prose.isRefusal(passage), "wrongly refused: \(passage.prefix(50))")
+        }
+    }
+
+    func testANounPhraseBecomesAnInstruction() {
+        XCTAssertEqual(Prose.asked("a poem"), "Write a poem.")
+        XCTAssertEqual(Prose.asked("  a toast for my friend "), "Write a toast for my friend.")
+        // Already an instruction, so left alone.
+        XCTAssertEqual(Prose.asked("Write me a limerick"), "Write me a limerick")
+        XCTAssertEqual(Prose.asked("tell me a story"), "tell me a story")
+        XCTAssertEqual(Prose.asked("Something about the sea."), "Something about the sea.")
+        XCTAssertEqual(Prose.asked(""), "")
+    }
+
+    func testTidyingWhatComesBack() {
+        XCTAssertEqual(Prose.spoken("**Bold** and _quiet_"), "Bold and quiet")
+        // Verse keeps its shape.
+        XCTAssertEqual(Prose.spoken("One line\n\nTwo line\n"), "One line\nTwo line")
+        // A response that quoted itself, with either kind of quotation mark.
+        XCTAssertEqual(Prose.spoken("\"All of it in quotes\""), "All of it in quotes")
+        XCTAssertEqual(Prose.spoken("\u{201C}Curly ones too\u{201D}"), "Curly ones too")
+        // But a quotation inside a passage is left where it is.
+        XCTAssertEqual(Prose.spoken("She said \"hello\" and left."),
+                       "She said \"hello\" and left.")
+    }
+}

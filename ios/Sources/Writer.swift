@@ -1,4 +1,5 @@
 import Foundation
+import MimicKit
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
@@ -57,23 +58,6 @@ final class Writer: ObservableObject {
         Around eighty words unless more is asked for.
         """
 
-    /// Turn what somebody typed into something a model will act on.
-    ///
-    /// People type a noun phrase — "a poem", "a toast" — and a small model
-    /// handed that on its own repeats it straight back rather than writing one.
-    /// Making it an instruction costs nothing and fixes it.
-    static func asked(_ instruction: String) -> String {
-        let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let first = trimmed.first else { return trimmed }
-        let looksLikeAnInstruction = trimmed.contains(" ")
-            && ["write", "compose", "make", "give", "tell", "draft"]
-                .contains { trimmed.lowercased().hasPrefix($0) }
-        if looksLikeAnInstruction || first.isUppercase && trimmed.hasSuffix(".") {
-            return trimmed
-        }
-        return "Write \(trimmed)."
-    }
-
     /// Apple's model only. `Readiness` above is about the app as a whole.
     enum AppleReadiness {
         case ready
@@ -124,18 +108,18 @@ final class Writer: ObservableObject {
         // person could read out.
         let session = LanguageModelSession(instructions: Writer.brief)
         do {
-            let response = try await session.respond(to: Writer.asked(instruction))
+            let response = try await session.respond(to: Prose.asked(instruction))
             let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
             // A refusal comes back as an ordinary reply, not an error, so
             // without this "I can't help with that" was pasted into the box and
             // then read aloud in your own voice, which is a strange thing to
             // hear yourself say.
-            guard !Writer.isRefusal(text) else {
+            guard !Prose.isRefusal(text) else {
                 problem = "The system model would not write that one."
                 return nil
             }
-            return Writer.spoken(text)
+            return Prose.spoken(text)
         } catch {
             problem = error.localizedDescription
             return nil
@@ -155,43 +139,13 @@ final class Writer: ObservableObject {
         isWriting = true
         defer { isWriting = false }
         do {
-            let text = try await store.write(Writer.asked(instruction), system: Writer.brief)
+            let text = try await store.write(Prose.asked(instruction), system: Writer.brief)
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : Writer.spoken(trimmed)
+            return trimmed.isEmpty ? nil : Prose.spoken(trimmed)
         } catch {
             problem = error.localizedDescription
             return nil
         }
-    }
-
-    /// Apple's model declines by replying rather than by failing.
-    ///
-    /// Only short replies are considered: a long passage that happens to open
-    /// with "I cannot" is a passage, not a refusal, and pieces that begin that
-    /// way are exactly the sort of thing people ask for.
-    static func isRefusal(_ text: String) -> Bool {
-        let opening = text.prefix(60).lowercased()
-        guard text.count < 200 else { return false }
-        return ["i can't", "i cannot", "i can not", "i'm unable", "i am unable",
-                "i won't", "i will not", "sorry, i", "i'm sorry", "i am sorry"]
-            .contains { opening.hasPrefix($0) }
-    }
-
-    /// Tidy what came back into something the voice can read.
-    static func spoken(_ text: String) -> String {
-        var cleaned = text
-        // Markdown emphasis is silent on the page and nonsense out loud.
-        for marker in ["**", "*", "__", "_", "#"] {
-            cleaned = cleaned.replacingOccurrences(of: marker, with: "")
-        }
-        // A whole response wrapped in quotes is the model quoting itself.
-        if cleaned.hasPrefix("\"") && cleaned.hasSuffix("\"") && cleaned.count > 2 {
-            cleaned = String(cleaned.dropFirst().dropLast())
-        }
-        return cleaned.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
     }
 }
 
