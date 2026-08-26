@@ -65,8 +65,10 @@ Measured on an M5, and on an iPhone 17 Pro simulator:
 | Download | 968 MiB once | — | 600 MiB on first run |
 | Cloning a voice | ~5s | ~5s | ~5s |
 
-Saying the same thing twice is free: synthesis is deterministic for a given
-seed, so results are cached by voice and text.
+Saying the same thing twice is free, on all three: synthesis is deterministic
+for a given seed, so a passage is kept on disk under its voice, seed and words
+and read back instead of remade. It matters most on the phone, where re-rendering
+something you just listened to would cost the whole wait again.
 
 ## Something to say
 

@@ -151,19 +151,13 @@ final class RegistrationTests: XCTestCase {
     }
 }
 
-/// A minimal WAV reader, for tests only.
+/// Reading a WAV from disk. The parsing itself is `Audio.samples(fromWav:)`,
+/// which the cache relies on and which walks the chunk list rather than
+/// assuming the header is exactly 44 bytes long.
 enum WavReader {
     static func read(_ url: URL) -> (samples: [Float], sampleRate: Int)? {
-        guard let data = try? Data(contentsOf: url), data.count > 44 else { return nil }
-        let rate = data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 24, as: UInt32.self) }
-        let body = data.dropFirst(44)
-        let samples = body.withUnsafeBytes { raw -> [Float] in
-            let count = raw.count / 2
-            return (0..<count).map {
-                Float(raw.loadUnaligned(fromByteOffset: $0 * 2, as: Int16.self)) / 32768
-            }
-        }
-        return (samples, Int(rate))
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return Audio.samples(fromWav: data)
     }
 }
 
@@ -357,5 +351,106 @@ final class WaitEstimateTests: XCTestCase {
                 "at \(factor)x the countdown hit zero \(actual - promised)s early, "
                 + "more than the \(step * factor)s one sentence takes")
         }
+    }
+}
+
+/// The cache is only honest because synthesis is deterministic: same voice,
+/// same seed, same words, same samples. These check the parts that are not
+/// about the model — that what goes in comes back, that a voice's audio does
+/// not outlive the voice, and that it stays inside its limit.
+final class AudioCacheTests: XCTestCase {
+
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appending(path: "mimic-cache-\(UUID().uuidString)")
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    /// 16-bit is what the engine outputs anyway, so the round trip through a
+    /// WAV has to be inaudible — but it is lossy, and the tolerance says so.
+    func testWhatGoesInComesBack() throws {
+        let cache = AudioCache(directory: directory)
+        let original = (0..<2_000).map { sinf(Float($0) * 0.05) * 0.8 }
+
+        XCTAssertFalse(cache.has(text: "hello", voice: "David", seed: 42))
+        cache.write(original, text: "hello", voice: "David", seed: 42, sampleRate: 44_100)
+        XCTAssertTrue(cache.has(text: "hello", voice: "David", seed: 42))
+
+        let read = try XCTUnwrap(cache.read(text: "hello", voice: "David", seed: 42))
+        XCTAssertEqual(read.count, original.count)
+        for (a, b) in zip(read, original) {
+            XCTAssertEqual(a, b, accuracy: 1.0 / 32_767)
+        }
+    }
+
+    func testEveryPartOfTheKeyMatters() {
+        let cache = AudioCache(directory: directory)
+        cache.write([0.5, -0.5], text: "hello", voice: "David", seed: 42, sampleRate: 44_100)
+
+        XCTAssertNotNil(cache.read(text: "hello", voice: "David", seed: 42))
+        XCTAssertNil(cache.read(text: "hello!", voice: "David", seed: 42))
+        XCTAssertNil(cache.read(text: "hello", voice: "Jadranka", seed: 42))
+        XCTAssertNil(cache.read(text: "hello", voice: "David", seed: 43))
+    }
+
+    /// The one that would be a bug you could hear: a new voice recorded under
+    /// an old name answering in the old voice.
+    func testForgettingAVoiceLeavesTheOthersAlone() {
+        let cache = AudioCache(directory: directory)
+        cache.write([0.5], text: "hello", voice: "David", seed: 42, sampleRate: 44_100)
+        cache.write([0.5], text: "goodbye", voice: "David", seed: 42, sampleRate: 44_100)
+        cache.write([0.5], text: "hello", voice: "Jadranka", seed: 42, sampleRate: 44_100)
+
+        cache.forget(voice: "David")
+
+        XCTAssertNil(cache.read(text: "hello", voice: "David", seed: 42))
+        XCTAssertNil(cache.read(text: "goodbye", voice: "David", seed: 42))
+        XCTAssertNotNil(cache.read(text: "hello", voice: "Jadranka", seed: 42))
+    }
+
+    /// Names are typed by people and become file names. The digest is taken
+    /// from the name as given, so two names that clean up the same way still
+    /// get different entries.
+    func testAwkwardVoiceNames() throws {
+        let cache = AudioCache(directory: directory)
+        cache.write([0.5], text: "hi", voice: "David - Bored", seed: 42, sampleRate: 44_100)
+        cache.write([0.25], text: "hi", voice: "David / Awake", seed: 42, sampleRate: 44_100)
+
+        let bored = try XCTUnwrap(cache.read(text: "hi", voice: "David - Bored", seed: 42))
+        let awake = try XCTUnwrap(cache.read(text: "hi", voice: "David / Awake", seed: 42))
+        XCTAssertNotEqual(bored, awake)
+    }
+
+    func testItStaysUnderTheLimit() throws {
+        // 1 MB of room, and eight entries of roughly 200 KB each.
+        let cache = AudioCache(directory: directory, limitMB: 1)
+        let block = [Float](repeating: 0.1, count: 100_000)      // 200 KB as 16-bit
+
+        for index in 0..<8 {
+            cache.write(block, text: "passage \(index)", voice: "David",
+                        seed: 42, sampleRate: 44_100)
+        }
+
+        let files = try FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.fileSizeKey])
+        let total = files.reduce(0) {
+            $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        }
+        XCTAssertLessThanOrEqual(total, 1_024 * 1_024)
+        XCTAssertFalse(files.isEmpty, "pruning emptied the cache instead of trimming it")
+
+        // The most recent write survives — it is the one about to be replayed.
+        XCTAssertNotNil(cache.read(text: "passage 7", voice: "David", seed: 42))
+    }
+
+    func testRubbishIsNotAudio() {
+        XCTAssertNil(Audio.samples(fromWav: Data()))
+        XCTAssertNil(Audio.samples(fromWav: Data(repeating: 0, count: 200)))
+        XCTAssertNil(Audio.samples(fromWav: Data("RIFF....WAVEjunk".utf8)))
     }
 }

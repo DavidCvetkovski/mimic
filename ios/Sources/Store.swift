@@ -73,6 +73,7 @@ final class Store: ObservableObject {
     }
     var modelDirectory: URL { home.appending(path: "model") }
     var voicesDirectory: URL { home.appending(path: "voices") }
+    var cacheDirectory: URL { home.appending(path: "cache") }
     var canRecord: Bool { ModelDownload.canRecord(at: modelDirectory) }
 
     // MARK: - Starting up
@@ -103,7 +104,7 @@ final class Store: ObservableObject {
 
     func load() async {
         stage = .loading
-        let directories = (modelDirectory, voicesDirectory)
+        let directories = (modelDirectory, voicesDirectory, cacheDirectory)
         // The performance-core count. Including the efficiency cores measurably
         // slows this down — see Runtime.recommendedThreads.
         let cores = Runtime.recommendedThreads
@@ -112,7 +113,8 @@ final class Store: ObservableObject {
             // should keep drawing while it happens.
             let engine = try await Task.detached(priority: .userInitiated) {
                 try Runtime(modelDirectory: directories.0,
-                            voicesDirectory: directories.1, threads: cores)
+                            voicesDirectory: directories.1, threads: cores,
+                            cacheDirectory: directories.2)
             }.value
             runtime = engine
             refreshVoices()
@@ -146,11 +148,17 @@ final class Store: ObservableObject {
         estimate = Runtime.estimate(words)
         player.reset()
 
-        // Tell them how long before they can press play, and count it down.
-        let wait = StreamPlayer.waitEstimate(forSeconds: estimate,
-                                             realtimeFactor: knownRealtimeFactor)
+        // Tell them how long before they can press play, and count it down —
+        // unless this passage is already on disk, in which case there is no
+        // wait to announce and a countdown would only flash and vanish.
+        let options = Runtime.Options()
+        let heardBefore = runtime.cache?.has(text: words, voice: voice,
+                                             seed: options.seed) ?? false
         progress = "about \(Int(estimate.rounded()))s of audio"
-        startWaitCountdown(from: wait)
+        if !heardBefore {
+            startWaitCountdown(from: StreamPlayer.waitEstimate(
+                forSeconds: estimate, realtimeFactor: knownRealtimeFactor))
+        }
 
         let cancel = CancelBox()
         let rate = runtime.manifest.sampleRate
@@ -166,11 +174,14 @@ final class Store: ObservableObject {
             }
             do {
                 var worstRtf = 1.2
+                var fromCache = false
                 try await Task.detached(priority: .userInitiated) {
-                    try runtime.synthesizeStream(text: words, voice: voice) { chunk in
+                    try runtime.synthesizeStream(text: words, voice: voice,
+                                                 options: options) { chunk in
                         Task { @MainActor [weak self] in
                             guard let self else { return }
                             self.player.append(chunk.samples, sampleRate: rate)
+                            if chunk.cached { fromCache = true }
                             worstRtf = max(worstRtf, chunk.realtimeFactor)
                             self.progress = "sentence \(chunk.index + 1) of \(chunk.of)"
                             if self.player.isPlaying { self.stopWaitCountdown() }
@@ -191,9 +202,16 @@ final class Store: ObservableObject {
                     self.player.isComplete = true
                     if !self.player.isPlaying { self.player.play() }
                     let elapsed = Date().timeIntervalSince(began)
+                    self.stopWaitCountdown()
+                    guard !fromCache else {
+                        // A disk read is not a measurement of how fast this
+                        // phone synthesises. Learning from it would make every
+                        // later countdown promise something it cannot deliver.
+                        self.lastTiming = "played from cache"
+                        return
+                    }
                     let measured = elapsed / max(self.player.buffered, 0.01)
                     self.knownRealtimeFactor = measured      // for next time
-                    self.stopWaitCountdown()
                     self.lastTiming = String(
                         format: "%.1fs for %.1fs of audio · %.2f× real time",
                         elapsed, self.player.buffered, measured)
@@ -282,12 +300,18 @@ final class Store: ObservableObject {
             try registrar.register(name: name, samples: samples,
                                    sampleRate: sampleRate, transcript: transcript)
         }.value
+        // Re-recording under an existing name replaces the voice, so anything
+        // cached for it is now the wrong person.
+        runtime?.cache?.forget(voice: name)
         refreshVoices()
         selected = name
     }
 
     func delete(_ name: String) {
         try? FileManager.default.removeItem(at: voicesDirectory.appending(path: name))
+        // Otherwise a new voice recorded under the same name would answer with
+        // this one's audio.
+        runtime?.cache?.forget(voice: name)
         refreshVoices()
     }
 }

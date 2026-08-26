@@ -21,4 +21,53 @@ public enum Audio {
         }
         return data
     }
+
+    /// Read back what `wav` wrote.
+    ///
+    /// Walks the chunk list rather than assuming a 44-byte header, because
+    /// anything that has been through another tool may carry a `LIST` before
+    /// the audio. Returns nil for anything that is not 16-bit mono PCM, which
+    /// is the only thing written here.
+    public static func samples(fromWav data: Data) -> (samples: [Float], sampleRate: Int)? {
+        guard data.count >= 44,
+              data.prefix(4) == Data("RIFF".utf8),
+              data[8..<12] == Data("WAVE".utf8) else { return nil }
+
+        func integer<T: FixedWidthInteger>(at offset: Int, as: T.Type) -> T? {
+            let end = offset + MemoryLayout<T>.size
+            guard offset >= 0, end <= data.count else { return nil }
+            return data[offset..<end].withUnsafeBytes {
+                T(littleEndian: $0.loadUnaligned(as: T.self))
+            }
+        }
+
+        var offset = 12
+        var sampleRate = 0
+        while offset + 8 <= data.count {
+            let identifier = data[offset..<offset + 4]
+            guard let size = integer(at: offset + 4, as: UInt32.self) else { return nil }
+            let body = offset + 8
+
+            if identifier == Data("fmt ".utf8) {
+                guard let format = integer(at: body, as: UInt16.self), format == 1,
+                      let channels = integer(at: body + 2, as: UInt16.self), channels == 1,
+                      let rate = integer(at: body + 4, as: UInt32.self),
+                      let bits = integer(at: body + 14, as: UInt16.self), bits == 16
+                else { return nil }
+                sampleRate = Int(rate)
+            } else if identifier == Data("data".utf8) {
+                guard sampleRate > 0 else { return nil }
+                let count = min(Int(size), data.count - body) / 2
+                var samples = [Float](repeating: 0, count: count)
+                for index in 0..<count {
+                    guard let raw = integer(at: body + index * 2, as: Int16.self) else { break }
+                    samples[index] = Float(raw) / (raw < 0 ? 32_768 : 32_767)
+                }
+                return (samples, sampleRate)
+            }
+            // Chunks are padded to an even length.
+            offset = body + Int(size) + (Int(size) % 2)
+        }
+        return nil
+    }
 }

@@ -57,7 +57,12 @@ public final class Runtime {
     var profile = Profile()
     public var profileReport: String { profile.description }
 
-    public init(modelDirectory: URL, voicesDirectory: URL, threads: Int = 4) throws {
+    /// Where finished passages are kept, when the caller wants them kept.
+    public let cache: AudioCache?
+
+    public init(modelDirectory: URL, voicesDirectory: URL, threads: Int = 4,
+                cacheDirectory: URL? = nil) throws {
+        cache = cacheDirectory.map { AudioCache(directory: $0) }
         guard FileManager.default.fileExists(
             atPath: modelDirectory.appending(path: "runtime_manifest.json").path) else {
             throw MimicError.modelMissing("no runtime_manifest.json in \(modelDirectory.path)")
@@ -235,6 +240,9 @@ public final class Runtime {
         public let seconds: Double
         /// How much slower than real time generation is running, so far.
         public let realtimeFactor: Double
+        /// Read back rather than generated, so `realtimeFactor` measures a disk
+        /// read and says nothing about how fast this machine synthesises.
+        public var cached = false
     }
 
     /// Render a sentence at a time, handing each back as it is finished.
@@ -249,9 +257,20 @@ public final class Runtime {
     public func synthesizeStream(text: String, voice: String,
                                  options: Options = Options(),
                                  onChunk: (Chunk) -> Bool) throws {
+        // Heard before, and deterministic, so it is the same audio rather than
+        // audio like it. Handed back whole: there is nothing to stream when
+        // there is nothing left to wait for.
+        if let cache, let hit = cache.read(text: text, voice: voice, seed: options.seed) {
+            _ = onChunk(Chunk(samples: hit, index: 0, of: 1,
+                              seconds: Double(hit.count) / Double(manifest.sampleRate),
+                              realtimeFactor: 0, cached: true))
+            return
+        }
+
         let parts = Runtime.split(text)
         let began = Date()
         var seconds = 0.0
+        var everything: [Float] = []
         let silence = [Float](repeating: 0, count: Int(Double(manifest.sampleRate) * 0.18))
 
         // Sentence by sentence, in order, on one thread.
@@ -268,12 +287,17 @@ public final class Runtime {
             // A breath between sentences, or they run together.
             if index < parts.count - 1 { samples.append(contentsOf: silence) }
             seconds += Double(samples.count) / Double(manifest.sampleRate)
+            everything.append(contentsOf: samples)
             let elapsed = Date().timeIntervalSince(began)
             let carryOn = onChunk(Chunk(samples: samples, index: index, of: parts.count,
                                         seconds: seconds,
                                         realtimeFactor: elapsed / max(seconds, 0.01)))
+            // Stopped early, so what exists is not the passage — caching it
+            // would answer a later request with half a sentence.
             if !carryOn { return }
         }
+        cache?.write(everything, text: text, voice: voice,
+                     seed: options.seed, sampleRate: manifest.sampleRate)
     }
 
     /// Roughly how many seconds of speech some text will make.
