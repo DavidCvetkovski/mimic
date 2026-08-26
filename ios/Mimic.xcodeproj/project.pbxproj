@@ -16,6 +16,7 @@
 		C0FF16A11E5100DEADBEEF03 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = C0FF16A11E5100DEADBEEF02 /* PrivacyInfo.xcprivacy */; };
 		AA400DFD4219F700A8EA7668 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3685E330EC5277A9DD5661C6 /* Assets.xcassets */; };
 		D7FCDAA751F5C6E177E3CF5F /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = CADF772F7C41FE1CBDB1993E /* Store.swift */; };
+		8326188C3C26A1A1D0A49CA3 /* WriteSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35856FAC9755BCD14C124276 /* WriteSheet.swift */; };
 		ED4A791413638E8A0A72CF91 /* Writer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49B4CA788C02A7554C8A33FA /* Writer.swift */; };
 /* End PBXBuildFile section */
 
@@ -23,6 +24,7 @@
 		C0FF16A11E5100DEADBEEF01 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 		C0FF16A11E5100DEADBEEF02 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		3685E330EC5277A9DD5661C6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		35856FAC9755BCD14C124276 /* WriteSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WriteSheet.swift; sourceTree = "<group>"; };
 		49B4CA788C02A7554C8A33FA /* Writer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Writer.swift; sourceTree = "<group>"; };
 		5EFB7CB5993B49588A37178C /* SpeakView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakView.swift; sourceTree = "<group>"; };
 		6842CB57FA6D015B4F45FF53 /* ModelDownload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownload.swift; sourceTree = "<group>"; };
@@ -63,6 +65,7 @@
 				6DD5977CFD59104608857DC8 /* Recorder.swift */,
 				5EFB7CB5993B49588A37178C /* SpeakView.swift */,
 				CADF772F7C41FE1CBDB1993E /* Store.swift */,
+				35856FAC9755BCD14C124276 /* WriteSheet.swift */,
 				49B4CA788C02A7554C8A33FA /* Writer.swift */,
 			);
 			path = Sources;
@@ -165,6 +168,7 @@
 				6A12C84EDE82DE50A72D26BA /* Recorder.swift in Sources */,
 				882662D566DE4FC84D7B1EBD /* SpeakView.swift in Sources */,
 				D7FCDAA751F5C6E177E3CF5F /* Store.swift in Sources */,
+				8326188C3C26A1A1D0A49CA3 /* WriteSheet.swift in Sources */,
 				ED4A791413638E8A0A72CF91 /* Writer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -32,6 +32,39 @@ final class Writer: ObservableObject {
         var reason: String? { if case .missing(let why) = self { return why }; return nil }
     }
 
+    /// Which model writes it. A preference, not a fact about the device.
+    enum Choice: String, CaseIterable, Identifiable {
+        case mimic
+        case apple
+
+        var id: String { rawValue }
+        var name: String { self == .mimic ? "Mimic's" : "Apple's" }
+        var note: String {
+            switch self {
+            case .mimic:
+                return "Mimic's own model, on this phone. Smaller and plainer, "
+                     + "works with no signal, and never declines."
+            case .apple:
+                return "Apple's system model. Better written when it agrees to "
+                     + "write, and it declines more than you would expect."
+            }
+        }
+    }
+
+    var isAppleAvailable: Bool {
+        if case .ready = appleReadiness { return true }
+        return false
+    }
+
+    /// Write with whichever model was chosen.
+    func write(_ instruction: String, with choice: Choice,
+               store: Store) async -> String? {
+        switch choice {
+        case .apple:  return await writeWithSystemModel(instruction)
+        case .mimic:  return await writeLocally(instruction, using: store)
+        }
+    }
+
     /// Where the writing actually happens.
     ///
     /// Apple's model is free and needs no download, so it is used when it is

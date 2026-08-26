@@ -625,14 +625,61 @@ final class ProseTests: XCTestCase {
         }
     }
 
-    func testANounPhraseBecomesAnInstruction() {
-        XCTAssertEqual(Prose.asked("a poem"), "Write a poem.")
-        XCTAssertEqual(Prose.asked("  a toast for my friend "), "Write a toast for my friend.")
-        // Already an instruction, so left alone.
+    /// Measured, not guessed: "Please write me poem." makes the model refuse
+    /// and "Please write me a poem." makes it write one.
+    func testABareNounGetsItsArticle() {
+        XCTAssertEqual(Prose.asked("poem"), "Please write me a poem.")
+        XCTAssertEqual(Prose.asked("limerick about a cat"), "Please write me a limerick about a cat.")
+        XCTAssertEqual(Prose.asked("epitaph"), "Please write me an epitaph.")
+        XCTAssertEqual(Prose.asked("a poem"), "Please write me a poem.")
+        XCTAssertEqual(Prose.asked("  the shipping forecast "),
+                       "Please write me the shipping forecast.")
+    }
+
+    /// A wrong article reads worse than a missing one, so it stays shy.
+    func testItDoesNotInventArticlesItShouldNot() {
+        XCTAssertEqual(Prose.asked("jokes about dogs"), "Please write me jokes about dogs.")
+        XCTAssertEqual(Prose.asked("something funny"), "Please write me something funny.")
+        XCTAssertEqual(Prose.asked("two limericks"), "Please write me two limericks.")
+        XCTAssertEqual(Prose.asked("my horoscope"), "Please write me my horoscope.")
+        // Not a plural — it just ends in one s.
+        XCTAssertEqual(Prose.asked("address to the nation"),
+                       "Please write me an address to the nation.")
+    }
+
+    func testAnInstructionIsLeftAsWritten() {
         XCTAssertEqual(Prose.asked("Write me a limerick"), "Write me a limerick")
         XCTAssertEqual(Prose.asked("tell me a story"), "tell me a story")
         XCTAssertEqual(Prose.asked("Something about the sea."), "Something about the sea.")
         XCTAssertEqual(Prose.asked(""), "")
+    }
+
+    /// Read aloud, a labelled poem announces "verse one" in your own voice.
+    func testStructuralLabelsAreNotSpoken() {
+        let labelled = "Chorus: A poem to end all poems\nVerse 1: The sun sets\n"
+                     + "Verse 2: The birdsong echoes"
+        XCTAssertEqual(Prose.spoken(labelled),
+                       "A poem to end all poems\nThe sun sets\nThe birdsong echoes")
+        // Writing that happens to contain a colon is writing.
+        XCTAssertEqual(Prose.spoken("She said: hello."), "She said: hello.")
+        XCTAssertEqual(Prose.spoken("Dear Sir: I write to complain."),
+                       "Dear Sir: I write to complain.")
+        XCTAssertEqual(Prose.spoken("Lines are not to be ignored."),
+                       "Lines are not to be ignored.")
+    }
+
+    /// "Sure, here's a short poem:" is addressed to whoever asked, not to
+    /// whoever will hear it — and it is the giveaway that you did not write it.
+    func testThePreambleIsDropped() {
+        XCTAssertEqual(Prose.spoken("Sure, here's a short poem:\nThe rain fell."),
+                       "The rain fell.")
+        XCTAssertEqual(Prose.spoken("Certainly! Here is a toast:\nTo absent friends."),
+                       "To absent friends.")
+        // A colon that belongs to the writing stays put.
+        XCTAssertEqual(Prose.spoken("Dear Sir:\nI write to complain."),
+                       "Dear Sir:\nI write to complain.")
+        XCTAssertEqual(Prose.spoken("The rule is simple:\nnever look back."),
+                       "The rule is simple:\nnever look back.")
     }
 
     func testTidyingWhatComesBack() {

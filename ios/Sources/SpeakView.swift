@@ -9,8 +9,6 @@ struct SpeakView: View {
     @State private var recording = false
     @StateObject private var writer = Writer()
     @State private var askingFor = false
-    @State private var offeringWriter = false
-    @State private var instruction = ""
 
     var body: some View {
         NavigationStack {
@@ -64,35 +62,9 @@ struct SpeakView: View {
             .sheet(isPresented: $recording) {
                 RecordView().environmentObject(store)
             }
-            .alert("What should it say?", isPresented: $askingFor) {
-                TextField("a limerick about a cat who is late", text: $instruction)
-                Button("Cancel", role: .cancel) {}
-                // Offered up front rather than only after a refusal. Somebody
-                // whose phone has Apple's model still has a right to know there
-                // is another one and to choose it.
-                if case .system = writer.readiness(canWrite: store.canWrite) {
-                    Button("Get Mimic's own writer") { offeringWriter = true }
-                }
-                Button("Write it") {
-                    let asked = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !asked.isEmpty else { return }
-                    compose(asked)
-                }
-            } message: {
-                Text(writerNote)
-            }
-            .alert("Download the writer?", isPresented: $offeringWriter) {
-                Button("Not now", role: .cancel) {}
-                Button("Download") {
-                    Task {
-                        do { try await store.downloadWriter() }
-                        catch { writer.problem = error.localizedDescription }
-                    }
-                }
-            } message: {
-                Text("A small language model, about 470 MB, downloaded once. It "
-                     + "writes on this phone — nothing you type is sent anywhere, "
-                     + "and it works with no signal at all.")
+            .sheet(isPresented: $askingFor) {
+                WriteSheet(writer: writer) { store.text = $0 }
+                    .environmentObject(store)
             }
         }
     }
@@ -147,12 +119,8 @@ struct SpeakView: View {
                         EmptyView()
                     } else {
                         Button {
-                            if case .offerDownload = writer.readiness(canWrite: store.canWrite) {
-                                offeringWriter = true
-                            } else {
-                                instruction = ""
-                                askingFor = true
-                            }
+                            writer.problem = nil
+                            askingFor = true
                         } label: {
                             Label(writerLabel, systemImage: writerIcon)
                                 .font(.subheadline)
@@ -229,14 +197,6 @@ struct SpeakView: View {
         }
     }
 
-    private var writerNote: String {
-        if case .downloaded = writer.readiness(canWrite: store.canWrite) {
-            return "Written on this phone by Mimic's own writer. "
-                 + "Nothing is sent anywhere."
-        }
-        return "Apple's system model will write this, on the phone. Mimic has one "
-             + "of its own too — 470 MB, works with no signal, and does not decline."
-    }
 
     private var writerLabel: String {
         if let fraction = store.writerFraction {
@@ -254,23 +214,6 @@ struct SpeakView: View {
         return "wand.and.stars"
     }
 
-    private func compose(_ ask: String) {
-        Task {
-            let written: String?
-            switch writer.readiness(canWrite: store.canWrite) {
-            case .downloaded:
-                written = await writer.writeLocally(ask, using: store)
-            case .system:
-                written = await writer.writeWithSystemModel(ask)
-                // It declined, which it does. There is a model that will not,
-                // and this is the moment somebody would want it.
-                if written == nil, writer.problem != nil { offeringWriter = true }
-            default:
-                written = nil
-            }
-            if let written { store.text = written }
-        }
-    }
 
     private var speakButton: some View {
         VStack(alignment: .leading, spacing: 8) {
