@@ -448,6 +448,20 @@ final class AudioCacheTests: XCTestCase {
         XCTAssertNotNil(cache.read(text: "passage 7", voice: "David", seed: 42))
     }
 
+    /// A Data made by slicing another one keeps the parent's indices, so a
+    /// reader that counts from zero reads the wrong bytes — or traps.
+    func testReadingASlice() throws {
+        let original = [Float](repeating: 0.25, count: 100)
+        let wav = Audio.wav(original, sampleRate: 44_100)
+        let padded = Data(repeating: 0xAB, count: 17) + wav
+        let slice = padded.dropFirst(17)
+
+        XCTAssertNotEqual(slice.startIndex, 0, "not actually testing a slice")
+        let (samples, rate) = try XCTUnwrap(Audio.samples(fromWav: slice))
+        XCTAssertEqual(rate, 44_100)
+        XCTAssertEqual(samples.count, original.count)
+    }
+
     func testRubbishIsNotAudio() {
         XCTAssertNil(Audio.samples(fromWav: Data()))
         XCTAssertNil(Audio.samples(fromWav: Data(repeating: 0, count: 200)))

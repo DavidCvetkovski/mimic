@@ -29,23 +29,29 @@ public enum Audio {
     /// the audio. Returns nil for anything that is not 16-bit mono PCM, which
     /// is the only thing written here.
     public static func samples(fromWav data: Data) -> (samples: [Float], sampleRate: Int)? {
-        guard data.count >= 44,
-              data.prefix(4) == Data("RIFF".utf8),
-              data[8..<12] == Data("WAVE".utf8) else { return nil }
-
+        // Every offset below is relative to this rather than to zero: a Data
+        // that came from slicing another one keeps the parent's indices, and
+        // this is public enough to be handed one.
+        let base = data.startIndex
+        func slice(_ offset: Int, _ length: Int) -> Data? {
+            guard offset >= 0, offset + length <= data.count else { return nil }
+            return data[(base + offset)..<(base + offset + length)]
+        }
         func integer<T: FixedWidthInteger>(at offset: Int, as: T.Type) -> T? {
-            let end = offset + MemoryLayout<T>.size
-            guard offset >= 0, end <= data.count else { return nil }
-            return data[offset..<end].withUnsafeBytes {
-                T(littleEndian: $0.loadUnaligned(as: T.self))
+            slice(offset, MemoryLayout<T>.size).map { chunk in
+                chunk.withUnsafeBytes { T(littleEndian: $0.loadUnaligned(as: T.self)) }
             }
         }
+
+        guard data.count >= 44,
+              slice(0, 4) == Data("RIFF".utf8),
+              slice(8, 4) == Data("WAVE".utf8) else { return nil }
 
         var offset = 12
         var sampleRate = 0
         while offset + 8 <= data.count {
-            let identifier = data[offset..<offset + 4]
-            guard let size = integer(at: offset + 4, as: UInt32.self) else { return nil }
+            guard let identifier = slice(offset, 4),
+                  let size = integer(at: offset + 4, as: UInt32.self) else { return nil }
             let body = offset + 8
 
             if identifier == Data("fmt ".utf8) {
