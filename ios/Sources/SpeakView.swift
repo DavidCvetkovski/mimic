@@ -235,13 +235,10 @@ struct SpeakView: View {
         if let fraction = store.writerFraction {
             return "Getting the writer… \(Int(fraction * 100))%"
         }
-        if writer.isWriting { return "Writing…" }
-        if case .offerDownload = writer.readiness(canWrite: store.canWrite) {
-            return "Write me one"
-        }
-        return "Write me one"
+        return writer.isWriting ? "Writing…" : "Write me one"
     }
 
+    /// An arrow while there is something to fetch, a wand once there is not.
     private var writerIcon: String {
         if store.writerFraction != nil { return "arrow.down.circle" }
         if case .offerDownload = writer.readiness(canWrite: store.canWrite) {

@@ -39,3 +39,14 @@ from Hugging Face, published under the Apache License, Version 2.0.
 Note that the PyTorch base models in the same family (Audio8-TTS-Preview-0.1b
 and -0.6b) are released under the Audio8 Community License, which is a
 different and more restrictive licence. Mimic uses the ONNX release only.
+
+On request — never automatically — the iPhone app also downloads:
+
+    onnx-community/Qwen2.5-0.5B-Instruct
+
+an ONNX export of Qwen2.5-0.5B-Instruct by Alibaba Cloud, published under the
+Apache License, Version 2.0. It is used to write text for the speech model to
+read, and only when somebody asks for it.
+
+    Qwen2.5 Technical Report, Qwen Team, Alibaba Group, 2024
+    https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct

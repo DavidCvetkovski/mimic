@@ -283,9 +283,14 @@ need the model and skip without it.
 Mimic is MIT — see [LICENSE](LICENSE).
 
 It vendors Audio8's ONNX reference implementation under Apache 2.0, and
-downloads Apache 2.0 model weights at first run. Neither the weights nor the
-PyTorch base models — which carry a different, revenue-capped licence — are
-distributed here. See [NOTICE](NOTICE).
+downloads Apache 2.0 weights — Audio8's for speech at first run, and an ONNX
+export of Alibaba's Qwen2.5-0.5B-Instruct for writing, only if asked. No
+weights are distributed here, and neither are the PyTorch base models, which
+carry a different and revenue-capped licence. See [NOTICE](NOTICE).
+
+Everything it needs is permissively licensed on purpose. Several of the models
+usually recommended for zero-shot voice cloning — F5-TTS, Spark-TTS, XTTS-v2 —
+are non-commercial, and would quietly foreclose ever publishing this.
 
 **On cloning voices.** This is for your own voice, or one you have permission
 to use.
