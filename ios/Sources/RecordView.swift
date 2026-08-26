@@ -1,4 +1,5 @@
 import AVFoundation
+import MimicKit
 import SwiftUI
 
 /// Cloning a voice, on the phone.
@@ -131,9 +132,16 @@ struct RecordView: View {
     }
 
     private func playBack() {
-        let data = MimicWav.encode(recorder.samples, sampleRate: recorder.sampleRate)
-        try? AVAudioSession.sharedInstance().setCategory(.playback)
+        let data = Audio.wav(recorder.samples, sampleRate: recorder.sampleRate)
+        // Both arguments matter. Recording puts the session in `.measurement`,
+        // which turns off the output processing *and* leaves playback very
+        // quiet; setting the category alone keeps whatever mode was there, so
+        // this played back at a whisper on a real phone at full volume.
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default)
+        try? session.setActive(true)
         player = try? AVAudioPlayer(data: data)
+        player?.volume = 1
         player?.play()
     }
 
@@ -149,28 +157,5 @@ struct RecordView: View {
         } catch {
             problem = error.localizedDescription
         }
-    }
-}
-
-/// WAV, for playing a recording back before it is registered.
-enum MimicWav {
-    static func encode(_ samples: [Float], sampleRate: Int) -> Data {
-        var data = Data()
-        func put<T: FixedWidthInteger>(_ value: T) {
-            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
-        }
-        let bytes = samples.count * 2
-        data.append(contentsOf: Array("RIFF".utf8)); put(UInt32(36 + bytes))
-        data.append(contentsOf: Array("WAVE".utf8))
-        data.append(contentsOf: Array("fmt ".utf8)); put(UInt32(16))
-        put(UInt16(1)); put(UInt16(1))
-        put(UInt32(sampleRate)); put(UInt32(sampleRate * 2))
-        put(UInt16(2)); put(UInt16(16))
-        data.append(contentsOf: Array("data".utf8)); put(UInt32(bytes))
-        for sample in samples {
-            let clamped = max(-1, min(1, sample))
-            put(Int16(clamped * (clamped < 0 ? 32_768 : 32_767)))
-        }
-        return data
     }
 }

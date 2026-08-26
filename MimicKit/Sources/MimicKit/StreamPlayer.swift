@@ -28,6 +28,12 @@ public final class StreamPlayer: ObservableObject {
     private var format: AVAudioFormat?
     private var ticker: Timer?
     private var startedAt: Date?
+    /// Every buffer handed to the node, kept so it can be played again.
+    ///
+    /// A player node consumes what it is scheduled: once it has rendered the
+    /// last buffer there is nothing left, so pressing play a second time
+    /// started a transport over silence and immediately hit the end again.
+    private var rendered: [AVAudioPCMBuffer] = []
 
     public init() {}
 
@@ -78,6 +84,7 @@ public final class StreamPlayer: ObservableObject {
 
     public func reset() {
         stop()
+        rendered.removeAll()
         buffered = 0
         position = 0
         isComplete = false
@@ -103,11 +110,14 @@ public final class StreamPlayer: ObservableObject {
             buffer.floatChannelData?[0].update(from: source.baseAddress!, count: samples.count)
         }
         node.scheduleBuffer(buffer, completionHandler: nil)
+        rendered.append(buffer)
         buffered += Double(samples.count) / Double(sampleRate)
     }
 
     public func play() {
         guard !isPlaying, format != nil else { return }
+        // Starting again from the end means starting again from the beginning.
+        if hasFinished { rewind() }
         do {
             #if os(iOS)
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
@@ -135,6 +145,19 @@ public final class StreamPlayer: ObservableObject {
         }
     }
 
+    /// Played all the way to the end of a passage that is finished being made.
+    /// Merely catching up with generation is not the same thing.
+    private var hasFinished: Bool {
+        isComplete && buffered > 0 && position >= buffered - 0.05
+    }
+
+    /// Re-schedule everything and put the play head back to the start.
+    private func rewind() {
+        node.stop()                       // also clears what is still scheduled
+        for buffer in rendered { node.scheduleBuffer(buffer, completionHandler: nil) }
+        position = 0
+    }
+
     public func pause() {
         guard isPlaying else { return }
         node.pause()
@@ -157,5 +180,6 @@ public final class StreamPlayer: ObservableObject {
             engine.detach(node)
             format = nil
         }
+        rendered.removeAll()
     }
 }

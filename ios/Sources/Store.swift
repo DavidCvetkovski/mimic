@@ -293,18 +293,45 @@ final class Store: ObservableObject {
         if !canRecord {
             await download(ModelDownload.recording, note: "one-off, for cloning")
         }
+        // Put the speaking model down before picking the encoder up.
+        //
+        // The three speaking graphs are about 560 MB and the encoder another
+        // 400, and holding both at once is what a phone terminates an app for
+        // — which is exactly what it did. They are never needed together:
+        // registration reads a recording, and nothing is being spoken while it
+        // does. Reloading afterwards costs a couple of seconds, spent behind
+        // the "Saving…" the sheet is already showing.
+        runtime?.cache?.forget(voice: name)   // re-recording replaces the voice
+        runtime = nil
+
         let directories = (modelDirectory, voicesDirectory)
-        try await Task.detached(priority: .userInitiated) {
-            let registrar = try Registrar(modelDirectory: directories.0,
-                                          voicesDirectory: directories.1)
-            try registrar.register(name: name, samples: samples,
-                                   sampleRate: sampleRate, transcript: transcript)
-        }.value
-        // Re-recording under an existing name replaces the voice, so anything
-        // cached for it is now the wrong person.
-        runtime?.cache?.forget(voice: name)
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                let registrar = try Registrar(modelDirectory: directories.0,
+                                              voicesDirectory: directories.1)
+                try registrar.register(name: name, samples: samples,
+                                       sampleRate: sampleRate, transcript: transcript)
+            }.value
+        } catch {
+            await reloadEngine()        // failed or not, the app still speaks
+            throw error
+        }
+        await reloadEngine()
         refreshVoices()
         selected = name
+    }
+
+    /// Rebuild the engine without disturbing `stage`.
+    ///
+    /// Deliberately not `load()`: that moves the app to its loading screen,
+    /// which would tear down the view presenting the sheet this is called from.
+    private func reloadEngine() async {
+        let directories = (modelDirectory, voicesDirectory, cacheDirectory)
+        let cores = Runtime.recommendedThreads
+        runtime = try? await Task.detached(priority: .userInitiated) {
+            try Runtime(modelDirectory: directories.0, voicesDirectory: directories.1,
+                        threads: cores, cacheDirectory: directories.2)
+        }.value
     }
 
     func delete(_ name: String) {

@@ -17,7 +17,18 @@ struct MimicApp: App {
 /// The same warm paper and oxblood as the web app, so the two read as one
 /// product rather than two projects that happen to share a model.
 enum Palette {
-    static let blood = Color(red: 0.486, green: 0.145, blue: 0.161)
+    /// Oxblood on paper, and something closer to a rust on the dark ground.
+    ///
+    /// It was one fixed colour, and the app is tinted with it — so in the dark
+    /// scheme every button, and the text on every tinted chip, was a dark red
+    /// on a near-black background and effectively unreadable. A dynamic colour
+    /// fixes all of them at once, rather than each call site learning about the
+    /// colour scheme.
+    static let blood = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.757, green: 0.286, blue: 0.267, alpha: 1)
+            : UIColor(red: 0.486, green: 0.145, blue: 0.161, alpha: 1)
+    })
     static let paper = Color(red: 0.949, green: 0.929, blue: 0.890)
     static let ink = Color(red: 0.106, green: 0.094, blue: 0.082)
 
