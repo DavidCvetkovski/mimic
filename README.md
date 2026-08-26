@@ -36,6 +36,10 @@ and runs with aeroplane mode on.
 | **iOS** | Everything reimplemented in Swift. No server, no Python, no network. |
 | **MimicKit** | The Swift engine, as a package. Builds for iOS *and* macOS. |
 
+The Swift side runs two models: the speech engine, and a small language model
+that writes something to say. Neither is ever resident at the same time as the
+other — half a gigabyte each is what a phone terminates an app for.
+
 ## Try it
 
 ```bash
@@ -86,10 +90,24 @@ something you just listened to would cost the whole wait again.
 Most people open a text-to-speech app with nothing prepared, and a blank box is
 a bad first impression. The iPhone app opens with six passages to tap — Hamlet,
 Armstrong on the moon, Austen, Poe, Dickens — and a **Write me one** button that
-asks Apple's on-device model for whatever you describe: a birthday toast, a
-limerick about a late cat. It ships with the system, so there is nothing to
-download and nothing to host, and the prompt never leaves the phone, which is
-the same promise the rest of this makes.
+asks a language model for whatever you describe: a birthday toast, a limerick
+about a late cat.
+
+There are two, and which one answers depends on the phone. Apple's ships with
+the system, so it costs nothing and downloads nothing — but it only exists on
+recent hardware with Apple Intelligence switched on, and it declines more than
+you would expect; asked for a poem it will sometimes reply that it cannot help
+with anything creative. So the app carries its own: **Qwen2.5-0.5B-Instruct**,
+INT4, about 470 MB, fetched only when somebody taps the button and offered
+again the first time Apple's model says no. It is smaller and less able, and it
+does not refuse.
+
+Either way the prompt never leaves the phone, which is the same promise the
+rest of this makes — and with the local one, writing works in aeroplane mode
+like everything else here.
+
+Apache 2.0, which is why it can be here at all: of the small models usually
+recommended for this, most are non-commercial.
 
 The presets are all public domain. Song lyrics and film dialogue are the obvious
 crowd pleasers and both are still in copyright — shipping them inside an app is

@@ -177,6 +177,29 @@ enum ORT {
             }
         }
 
+        /// The last `width` values, without copying everything before them.
+        ///
+        /// A language model's logits are [1, tokens, vocabulary] and only the
+        /// final row is ever read. At 152k entries across a 34-token prompt
+        /// that is twenty megabytes copied and thrown away on every prefill.
+        func floatTail(_ width: Int) -> [Float] {
+            var pointer: UnsafeMutableRawPointer?
+            let total = count
+            guard width > 0, width <= total,
+                  ORT.api.pointee.GetTensorMutableData(handle, &pointer) == nil,
+                  let pointer else { return [] }
+            switch elementType {
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
+                let typed = pointer.bindMemory(to: Float.self, capacity: total)
+                return Array(UnsafeBufferPointer(start: typed + (total - width), count: width))
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
+                let typed = pointer.bindMemory(to: Float16.self, capacity: total)
+                return UnsafeBufferPointer(start: typed + (total - width),
+                                           count: width).map(Float.init)
+            default: return []
+            }
+        }
+
         func float16s() -> [Float16] {
             switch elementType {
             case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16: return raw(as: Float16.self)
@@ -192,6 +215,9 @@ enum ORT {
         }
         static func float16(_ values: [Float16], shape: [Int]) throws -> Value {
             try Value(values, shape: shape, type: ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16)
+        }
+        static func float32(_ values: [Float], shape: [Int]) throws -> Value {
+            try Value(values, shape: shape, type: ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
         }
         static func bool(_ values: [Bool], shape: [Int]) throws -> Value {
             try Value(values.map { UInt8($0 ? 1 : 0) }, shape: shape,
@@ -209,13 +235,23 @@ enum ORT {
         private let inputCStrings: [UnsafePointer<CChar>?]
         private let outputCStrings: [UnsafePointer<CChar>?]
 
-        init(env: Env, path: String, threads: Int, coreML: Bool = false) throws {
+        init(env: Env, path: String, threads: Int, coreML: Bool = false,
+             disabledOptimizers: [String] = []) throws {
             var options: OpaquePointer?
             try ORT.check(ORT.api.pointee.CreateSessionOptions(&options))
             defer { ORT.api.pointee.ReleaseSessionOptions(options) }
             try ORT.check(ORT.api.pointee.SetIntraOpNumThreads(options, Int32(threads)))
             try ORT.check(ORT.api.pointee.SetSessionGraphOptimizationLevel(options, ORT_ENABLE_ALL))
             try ORT.check(ORT.api.pointee.SetSessionLogSeverityLevel(options, 3))
+
+            // Named fusions can be switched off one at a time, which is better
+            // than turning the optimiser down: a pass that cannot handle one
+            // graph is no reason to give up the twenty that can.
+            if !disabledOptimizers.isEmpty {
+                try ORT.check(ORT.api.pointee.AddSessionConfigEntry(
+                    options, "optimization.disable_specified_optimizers",
+                    disabledOptimizers.joined(separator: ",")))
+            }
 
             // CoreML takes whichever subgraphs it can and leaves the rest on
             // the CPU. Worth offering for the codec decoder, which is dense

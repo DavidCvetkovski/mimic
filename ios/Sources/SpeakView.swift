@@ -9,6 +9,7 @@ struct SpeakView: View {
     @State private var recording = false
     @StateObject private var writer = Writer()
     @State private var askingFor = false
+    @State private var offeringWriter = false
     @State private var instruction = ""
 
     var body: some View {
@@ -69,13 +70,23 @@ struct SpeakView: View {
                 Button("Write it") {
                     let asked = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !asked.isEmpty else { return }
+                    compose(asked)
+                }
+            } message: {
+                Text(writerNote)
+            }
+            .alert("Download the writer?", isPresented: $offeringWriter) {
+                Button("Not now", role: .cancel) {}
+                Button("Download") {
                     Task {
-                        if let written = await writer.write(asked) { store.text = written }
+                        do { try await store.downloadWriter() }
+                        catch { writer.problem = error.localizedDescription }
                     }
                 }
             } message: {
-                Text("Written on this phone by the system model. "
-                     + "Nothing is sent anywhere.")
+                Text("A small language model, about 470 MB, downloaded once. It "
+                     + "writes on this phone — nothing you type is sent anywhere, "
+                     + "and it works with no signal at all.")
             }
         }
     }
@@ -126,20 +137,26 @@ struct SpeakView: View {
             Label2("OR TRY ONE OF THESE")
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    if writer.readiness.isReady {
+                    if case .missing = writer.readiness(canWrite: store.canWrite) {
+                        EmptyView()
+                    } else {
                         Button {
-                            instruction = ""
-                            askingFor = true
+                            if case .offerDownload = writer.readiness(canWrite: store.canWrite) {
+                                offeringWriter = true
+                            } else {
+                                instruction = ""
+                                askingFor = true
+                            }
                         } label: {
-                            Label(writer.isWriting ? "Writing…" : "Write me one",
-                                  systemImage: "wand.and.stars")
+                            Label(writerLabel, systemImage: writerIcon)
                                 .font(.subheadline)
                                 .padding(.horizontal, 14).padding(.vertical, 9)
                                 .background(Palette.blood.opacity(0.12), in: Capsule())
                                 .foregroundStyle(Palette.blood)
                         }
                         .buttonStyle(.plain)
-                        .disabled(writer.isWriting || store.isSpeaking)
+                        .disabled(writer.isWriting || store.isSpeaking
+                                  || store.writerFraction != nil)
                     }
 
                     ForEach(Preset.all) { preset in
@@ -161,7 +178,8 @@ struct SpeakView: View {
                 }
                 .padding(.vertical, 2)
             }
-            if let why = writer.readiness.reason, writer.problem == nil {
+            if let why = writer.readiness(canWrite: store.canWrite).reason,
+               writer.problem == nil {
                 Text(why).font(.caption2).foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -202,6 +220,51 @@ struct SpeakView: View {
                     .padding(.vertical, 2)
                 }
             }
+        }
+    }
+
+    private var writerNote: String {
+        if case .downloaded = writer.readiness(canWrite: store.canWrite) {
+            return "Written on this phone by the model you downloaded. "
+                 + "Nothing is sent anywhere."
+        }
+        return "Written on this phone by the system model. Nothing is sent anywhere."
+    }
+
+    private var writerLabel: String {
+        if let fraction = store.writerFraction {
+            return "Getting the writer… \(Int(fraction * 100))%"
+        }
+        if writer.isWriting { return "Writing…" }
+        if case .offerDownload = writer.readiness(canWrite: store.canWrite) {
+            return "Write me one"
+        }
+        return "Write me one"
+    }
+
+    private var writerIcon: String {
+        if store.writerFraction != nil { return "arrow.down.circle" }
+        if case .offerDownload = writer.readiness(canWrite: store.canWrite) {
+            return "arrow.down.circle"
+        }
+        return "wand.and.stars"
+    }
+
+    private func compose(_ ask: String) {
+        Task {
+            let written: String?
+            switch writer.readiness(canWrite: store.canWrite) {
+            case .downloaded:
+                written = await writer.writeLocally(ask, using: store)
+            case .system:
+                written = await writer.writeWithSystemModel(ask)
+                // It declined, which it does. There is a model that will not,
+                // and this is the moment somebody would want it.
+                if written == nil, writer.problem != nil { offeringWriter = true }
+            default:
+                written = nil
+            }
+            if let written { store.text = written }
         }
     }
 

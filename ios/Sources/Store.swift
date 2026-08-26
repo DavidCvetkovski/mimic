@@ -85,6 +85,10 @@ final class Store: ObservableObject {
     var voicesDirectory: URL { home.appending(path: "voices") }
     var cacheDirectory: URL { home.appending(path: "cache") }
     var canRecord: Bool { ModelDownload.canRecord(at: modelDirectory) }
+    var canWrite: Bool { ModelDownload.canWrite(at: modelDirectory) }
+
+    /// How far the writer's download has got, when one is running.
+    @Published private(set) var writerFraction: Double?
 
     // MARK: - Starting up
 
@@ -356,6 +360,39 @@ final class Store: ObservableObject {
         await reloadEngine()
         refreshVoices()
         selected = name
+    }
+
+    // MARK: - Writing
+
+    /// Fetch the writing model, on request and never otherwise.
+    func downloadWriter() async throws {
+        writerFraction = 0
+        defer { writerFraction = nil }
+        for try await fraction in ModelDownload.run(into: modelDirectory,
+                                                    files: ModelDownload.writing) {
+            writerFraction = fraction
+        }
+    }
+
+    /// Write something, with the model that is on this phone.
+    ///
+    /// The speaking model goes down first and comes back afterwards, for the
+    /// same reason registration does it: half a gigabyte of writer on top of
+    /// half a gigabyte of speech is what a phone kills an app for. Nothing is
+    /// being spoken while something is being written, so the two never need to
+    /// be resident together — and the reload happens in the background, while
+    /// there is a passage on screen to read.
+    func write(_ ask: String, system: String) async throws -> String {
+        guard canWrite else { throw MimicError.modelMissing("writer.onnx") }
+        let directory = modelDirectory
+        let cores = Runtime.recommendedThreads
+        runtime = nil
+
+        defer { Task { await self.reloadEngine() } }
+        return try await Task.detached(priority: .userInitiated) {
+            let author = try Author(modelDirectory: directory, threads: cores)
+            return try author.write(system: system, user: ask)
+        }.value
     }
 
     /// Rebuild the engine without disturbing `stage`.

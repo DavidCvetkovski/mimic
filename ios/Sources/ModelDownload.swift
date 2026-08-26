@@ -22,9 +22,13 @@ enum ModelDownload {
     struct File {
         let remote: String
         let local: String
-        init(_ remote: String, as local: String? = nil) {
+        /// Which repository it comes from. The speaking model and the writer
+        /// are published separately, by different people.
+        let base: String
+        init(_ remote: String, as local: String? = nil, from base: String = ModelDownload.base) {
             self.remote = remote
             self.local = local ?? (remote as NSString).lastPathComponent
+            self.base = base
         }
     }
 
@@ -44,10 +48,32 @@ enum ModelDownload {
         File("registration/registration_manifest.json"),
     ]
 
+    /// The writer is a different model from a different repository, and is only
+    /// fetched when somebody asks for it — most people arrive with something to
+    /// say, and half a gigabyte to write a limerick is not a fair default.
+    ///
+    /// Qwen2.5-0.5B-Instruct, INT4. Apache 2.0, which rules out most of the
+    /// small models usually recommended for this: the popular ones are
+    /// non-commercial.
+    static let writerBase =
+        "https://huggingface.co/onnx-community/Qwen2.5-0.5B-Instruct/resolve/main"
+    static let writing = [
+        File("onnx/model_q4f16.onnx", as: "writer.onnx", from: writerBase),
+        File("tokenizer.json", as: "writer_tokenizer.json", from: writerBase),
+        File("config.json", as: "writer_config.json", from: writerBase),
+    ]
+    static let writerBytes: Int64 = 468 * 1024 * 1024
+
     static let approximateBytes: Int64 = 600 * 1024 * 1024
 
     static func isComplete(at directory: URL) -> Bool {
         speaking.allSatisfy {
+            FileManager.default.fileExists(atPath: directory.appending(path: $0.local).path)
+        }
+    }
+
+    static func canWrite(at directory: URL) -> Bool {
+        writing.allSatisfy {
             FileManager.default.fileExists(atPath: directory.appending(path: $0.local).path)
         }
     }
@@ -71,7 +97,7 @@ enum ModelDownload {
                             continuation.yield(Double(index + 1) / Double(files.count))
                             continue
                         }
-                        guard let url = URL(string: "\(base)/\(file.remote)") else { continue }
+                        guard let url = URL(string: "\(file.base)/\(file.remote)") else { continue }
                         let (temporary, response) = try await URLSession.shared.download(from: url)
                         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                             throw MimicDownloadError.failed(file.local)

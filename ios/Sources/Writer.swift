@@ -15,16 +15,73 @@ final class Writer: ObservableObject {
     @Published private(set) var isWriting = false
     @Published var problem: String?
 
-    /// Whether there is a model to write with, and why not if there isn't.
+    /// Whether there is a model to write with, and what to do if there isn't.
     enum Readiness {
-        case ready
+        /// Apple's, which ships with the system and costs nothing.
+        case system
+        /// The one on this phone because somebody asked for it.
+        case downloaded
+        /// Neither, but the second can be fetched.
+        case offerDownload
         case missing(String)
 
-        var isReady: Bool { if case .ready = self { return true }; return false }
+        var isReady: Bool {
+            switch self { case .system, .downloaded: return true; default: return false }
+        }
         var reason: String? { if case .missing(let why) = self { return why }; return nil }
     }
 
-    var readiness: Readiness {
+    /// Where the writing actually happens.
+    ///
+    /// Apple's model is free and needs no download, so it is used when it is
+    /// there. It is also absent on most devices and declines more than it
+    /// should, so the app carries its own — and once that is installed it is
+    /// preferred, because it does the job the same way every time.
+    func readiness(canWrite: Bool) -> Readiness {
+        if canWrite { return .downloaded }
+        if case .ready = appleReadiness { return .system }
+        return .offerDownload
+    }
+
+    /// The instructions both backends work from.
+    static let brief = """
+        You write short pieces of text for someone to hear read aloud.
+
+        Write only the words to be spoken. No headings, no bullet points, no \
+        stage directions, no preamble, and no note about what you have \
+        written. Use ordinary punctuation — it is what tells a synthetic voice \
+        where to breathe.
+
+        Poems and verse are welcome; keep their line breaks. Anything else, \
+        write the way a person talks rather than the way a document reads. \
+        Around eighty words unless more is asked for.
+        """
+
+    /// Turn what somebody typed into something a model will act on.
+    ///
+    /// People type a noun phrase — "a poem", "a toast" — and a small model
+    /// handed that on its own repeats it straight back rather than writing one.
+    /// Making it an instruction costs nothing and fixes it.
+    static func asked(_ instruction: String) -> String {
+        let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first else { return trimmed }
+        let looksLikeAnInstruction = trimmed.contains(" ")
+            && ["write", "compose", "make", "give", "tell", "draft"]
+                .contains { trimmed.lowercased().hasPrefix($0) }
+        if looksLikeAnInstruction || first.isUppercase && trimmed.hasSuffix(".") {
+            return trimmed
+        }
+        return "Write \(trimmed)."
+    }
+
+    /// Apple's model only. `Readiness` above is about the app as a whole.
+    enum AppleReadiness {
+        case ready
+        case missing(String)
+        var reason: String? { if case .missing(let why) = self { return why }; return nil }
+    }
+
+    var appleReadiness: AppleReadiness {
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *) {
             switch SystemLanguageModel.default.availability {
@@ -48,15 +105,15 @@ final class Writer: ObservableObject {
         #endif
     }
 
-    /// Turn an instruction into something worth hearing aloud.
-    func write(_ instruction: String) async -> String? {
+    /// Write with Apple's model.
+    ///
+    /// Returns nil when it declines or fails, having set `problem` — the caller
+    /// can then offer the downloaded model instead, which does not refuse.
+    func writeWithSystemModel(_ instruction: String) async -> String? {
         problem = nil
-        guard readiness.isReady else {
-            problem = readiness.reason
-            return nil
-        }
         #if canImport(FoundationModels)
         guard #available(iOS 26.0, *) else { return nil }
+        if case .missing(let why) = appleReadiness { problem = why; return nil }
 
         isWriting = true
         defer { isWriting = false }
@@ -65,20 +122,9 @@ final class Writer: ObservableObject {
         // model writes for the page — headings, bullet points, asides in
         // brackets — none of which can be spoken. This asks for something a
         // person could read out.
-        let session = LanguageModelSession(instructions: """
-            You write short pieces of text for someone to hear read aloud.
-
-            Write only the words to be spoken. No headings, no bullet points, \
-            no stage directions, no preamble, and no note about what you have \
-            written. Use ordinary punctuation — it is what tells a synthetic \
-            voice where to breathe.
-
-            Poems and verse are welcome; keep their line breaks. Anything else, \
-            write the way a person talks rather than the way a document reads. \
-            Around eighty words unless more is asked for.
-            """)
+        let session = LanguageModelSession(instructions: Writer.brief)
         do {
-            let response = try await session.respond(to: instruction)
+            let response = try await session.respond(to: Writer.asked(instruction))
             let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
             // A refusal comes back as an ordinary reply, not an error, so
@@ -86,8 +132,7 @@ final class Writer: ObservableObject {
             // then read aloud in your own voice, which is a strange thing to
             // hear yourself say.
             guard !Writer.isRefusal(text) else {
-                problem = "The system model would not write that one. "
-                        + "Try asking differently, or use one of the passages."
+                problem = "The system model would not write that one."
                 return nil
             }
             return Writer.spoken(text)
@@ -98,6 +143,25 @@ final class Writer: ObservableObject {
         #else
         return nil
         #endif
+    }
+
+    /// Write with the model this app downloaded.
+    ///
+    /// It is smaller and less able than Apple's, and it never refuses — which
+    /// on balance is what this is for.
+    func writeLocally(_ instruction: String,
+                      using store: Store) async -> String? {
+        problem = nil
+        isWriting = true
+        defer { isWriting = false }
+        do {
+            let text = try await store.write(Writer.asked(instruction), system: Writer.brief)
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : Writer.spoken(trimmed)
+        } catch {
+            problem = error.localizedDescription
+            return nil
+        }
     }
 
     /// Apple's model declines by replying rather than by failing.

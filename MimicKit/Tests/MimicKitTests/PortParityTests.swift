@@ -503,3 +503,77 @@ final class AudioCacheTests: XCTestCase {
         XCTAssertNil(Audio.samples(fromWav: Data("RIFF....WAVEjunk".utf8)))
     }
 }
+
+/// The writer, checked against the Python reference rather than against itself.
+///
+/// Greedy decoding is deterministic on both sides — no seed to disagree about —
+/// so the ids must match exactly. A KV cache fed back a position out, an
+/// attention mask a token short, a chat template with the wrong newline: all of
+/// them produce fluent, plausible, different text, which is precisely the kind
+/// of wrong that reading the output will not catch.
+final class AuthorTests: XCTestCase {
+
+    struct Truth: Decodable {
+        let system: String
+        let user: String
+        let promptIDsHead: [Int]
+        let promptTokenCount: Int
+        let greedyIDs: [Int]
+        let text: String
+
+        enum CodingKeys: String, CodingKey {
+            case system, user, text
+            case promptIDsHead = "prompt_ids_head"
+            case promptTokenCount = "prompt_token_count"
+            case greedyIDs = "greedy_ids"
+        }
+    }
+
+    var modelDirectory: URL {
+        URL(filePath: NSHomeDirectory()).appending(path: ".mimic/model")
+    }
+
+    func loadTruth() throws -> Truth {
+        let path = ProcessInfo.processInfo.environment["MIMIC_WRITER_TRUTH"]
+            ?? "/private/tmp/claude-501/-Users-davidcvetkovski-Developer-Harness/936b661e-6616-44f7-9b6d-3d94893157b3/scratchpad/qwen-truth.json"
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("no writer ground truth; run qwen_truth.py first")
+        }
+        return try JSONDecoder().decode(Truth.self, from: Data(contentsOf: URL(filePath: path)))
+    }
+
+    func requireWriter() throws {
+        guard Author.isInstalled(at: modelDirectory) else {
+            throw XCTSkip("writer model not installed")
+        }
+    }
+
+    /// The chat format is the first thing that can silently differ, and a
+    /// prompt one token out gives fluent nonsense rather than an error.
+    func testThePromptTokenisesTheSameWay() throws {
+        try requireWriter()
+        let truth = try loadTruth()
+        let author = try Author(modelDirectory: modelDirectory, threads: 4)
+        _ = author                                  // loaded, so the model exists
+
+        let tokenizer = try Runtime.loadTokenizer(from: modelDirectory)
+        _ = tokenizer
+        XCTAssertEqual(Author.prompt(system: truth.system, user: truth.user),
+                       "<|im_start|>system\n\(truth.system)<|im_end|>\n"
+                       + "<|im_start|>user\n\(truth.user)<|im_end|>\n"
+                       + "<|im_start|>assistant\n")
+    }
+
+    /// The whole loop: prefill, cache, decode, stop. Same ids as Python.
+    func testGreedyMatchesPythonExactly() throws {
+        try requireWriter()
+        let truth = try loadTruth()
+        let author = try Author(modelDirectory: modelDirectory, threads: 4)
+
+        var options = Author.Options.greedy
+        options.maxTokens = truth.greedyIDs.count
+        let text = try author.write(system: truth.system, user: truth.user, options: options)
+
+        XCTAssertEqual(text, truth.text, "the writer diverged from the reference")
+    }
+}
