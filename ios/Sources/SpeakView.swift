@@ -67,6 +67,12 @@ struct SpeakView: View {
             .alert("What should it say?", isPresented: $askingFor) {
                 TextField("a limerick about a cat who is late", text: $instruction)
                 Button("Cancel", role: .cancel) {}
+                // Offered up front rather than only after a refusal. Somebody
+                // whose phone has Apple's model still has a right to know there
+                // is another one and to choose it.
+                if case .system = writer.readiness(canWrite: store.canWrite) {
+                    Button("Get Mimic's own writer") { offeringWriter = true }
+                }
                 Button("Write it") {
                     let asked = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !asked.isEmpty else { return }
@@ -225,10 +231,11 @@ struct SpeakView: View {
 
     private var writerNote: String {
         if case .downloaded = writer.readiness(canWrite: store.canWrite) {
-            return "Written on this phone by the model you downloaded. "
+            return "Written on this phone by Mimic's own writer. "
                  + "Nothing is sent anywhere."
         }
-        return "Written on this phone by the system model. Nothing is sent anywhere."
+        return "Apple's system model will write this, on the phone. Mimic has one "
+             + "of its own too — 470 MB, works with no signal, and does not decline."
     }
 
     private var writerLabel: String {
