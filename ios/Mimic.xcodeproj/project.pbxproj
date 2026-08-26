@@ -18,6 +18,9 @@
 		D7FCDAA751F5C6E177E3CF5F /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = CADF772F7C41FE1CBDB1993E /* Store.swift */; };
 		8326188C3C26A1A1D0A49CA3 /* WriteSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35856FAC9755BCD14C124276 /* WriteSheet.swift */; };
 		B04EAB8FA7723A706DA39187 /* ShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 512E5C984DD293404D9BB905 /* ShareSheet.swift */; };
+		59E79364523FA56CF8B1E753 /* VoicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4CD4DCC25911CBC0DAD9FE7 /* VoicesView.swift */; };
+		D13833C43D81268C978C3C71 /* Welcome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8304A9D3DD63E7926DAA55CA /* Welcome.swift */; };
+		643575B72ECB1A0B81BD7E29 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 124FBCE082EEF4CAE0450B8C /* SettingsView.swift */; };
 		ED4A791413638E8A0A72CF91 /* Writer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49B4CA788C02A7554C8A33FA /* Writer.swift */; };
 /* End PBXBuildFile section */
 
@@ -27,6 +30,9 @@
 		3685E330EC5277A9DD5661C6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		35856FAC9755BCD14C124276 /* WriteSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WriteSheet.swift; sourceTree = "<group>"; };
 		512E5C984DD293404D9BB905 /* ShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareSheet.swift; sourceTree = "<group>"; };
+		F4CD4DCC25911CBC0DAD9FE7 /* VoicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicesView.swift; sourceTree = "<group>"; };
+		8304A9D3DD63E7926DAA55CA /* Welcome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Welcome.swift; sourceTree = "<group>"; };
+		124FBCE082EEF4CAE0450B8C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		49B4CA788C02A7554C8A33FA /* Writer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Writer.swift; sourceTree = "<group>"; };
 		5EFB7CB5993B49588A37178C /* SpeakView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakView.swift; sourceTree = "<group>"; };
 		6842CB57FA6D015B4F45FF53 /* ModelDownload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownload.swift; sourceTree = "<group>"; };
@@ -69,6 +75,9 @@
 				CADF772F7C41FE1CBDB1993E /* Store.swift */,
 				35856FAC9755BCD14C124276 /* WriteSheet.swift */,
 				512E5C984DD293404D9BB905 /* ShareSheet.swift */,
+				F4CD4DCC25911CBC0DAD9FE7 /* VoicesView.swift */,
+				8304A9D3DD63E7926DAA55CA /* Welcome.swift */,
+				124FBCE082EEF4CAE0450B8C /* SettingsView.swift */,
 				49B4CA788C02A7554C8A33FA /* Writer.swift */,
 			);
 			path = Sources;
@@ -173,6 +182,9 @@
 				D7FCDAA751F5C6E177E3CF5F /* Store.swift in Sources */,
 				8326188C3C26A1A1D0A49CA3 /* WriteSheet.swift in Sources */,
 				B04EAB8FA7723A706DA39187 /* ShareSheet.swift in Sources */,
+				59E79364523FA56CF8B1E753 /* VoicesView.swift in Sources */,
+				D13833C43D81268C978C3C71 /* Welcome.swift in Sources */,
+				643575B72ECB1A0B81BD7E29 /* SettingsView.swift in Sources */,
 				ED4A791413638E8A0A72CF91 /* Writer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

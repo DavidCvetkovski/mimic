@@ -81,13 +81,15 @@ public struct Registrar {
             }
         }()
 
-        try write(name: clean, transcript: text, codes: codes)
+        try write(name: clean, transcript: text, codes: codes,
+                  recording: audio, rate: manifest.sampleRate)
         return VoiceProfile(name: clean, referenceText: text, codes: codes)
     }
 
     /// Written to a temporary directory and moved into place, so a profile is
     /// never half-written if the app is killed partway.
-    private func write(name: String, transcript: String, codes: [[Int32]]) throws {
+    private func write(name: String, transcript: String, codes: [[Int32]],
+                       recording: [Float], rate: Int) throws {
         let manager = FileManager.default
         try manager.createDirectory(at: voicesDirectory, withIntermediateDirectories: true)
         let staging = voicesDirectory.appending(path: ".\(name).staging")
@@ -107,6 +109,12 @@ public struct Registrar {
         ]
         try JSONSerialization.data(withJSONObject: meta, options: [.prettyPrinted, .sortedKeys])
             .write(to: staging.appending(path: "meta.json"))
+
+        // Keep the recording. The Python side does, the layouts have to match,
+        // and without it a voice cannot be played back to whoever made it —
+        // which is the only way to tell two of your own voices apart in a list.
+        try? Audio.wav(recording, sampleRate: rate)
+            .write(to: staging.appending(path: "reference.wav"))
 
         let target = voicesDirectory.appending(path: name)
         try? manager.removeItem(at: target)

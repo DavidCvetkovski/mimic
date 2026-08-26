@@ -25,6 +25,103 @@ public struct VoiceStore: Sendable {
         self.numCodebooks = numCodebooks
     }
 
+    /// For listing, renaming and deleting, none of which read a profile.
+    ///
+    /// The codebook count describes the model and is only checked when codes
+    /// are actually loaded — so a library can be managed without one, which
+    /// matters because the app can show the list before the engine is up.
+    public init(root: URL) {
+        self.init(root: root, numCodebooks: 0)
+    }
+
+    /// What a person needs to see about a voice without loading it.
+    ///
+    /// Loading a profile reads a megabyte of codes and is only worth doing to
+    /// speak with it. A list wants the name, when it was made, and whether
+    /// there is a recording to play back.
+    public struct Summary: Identifiable, Sendable, Hashable {
+        public let name: String
+        public let created: Date?
+        public let referenceText: String
+        /// The original recording, when one was kept.
+        public let recording: URL?
+        public let bytes: Int
+
+        public var id: String { name }
+    }
+
+    public func summaries() -> [Summary] {
+        names().map { name in
+            let directory = root.appending(path: name)
+            let meta = (try? JSONDecoder().decode(
+                Meta.self, from: Data(contentsOf: directory.appending(path: "meta.json"))))
+            let wav = directory.appending(path: "reference.wav")
+            let kept = FileManager.default.fileExists(atPath: wav.path)
+            return Summary(name: name,
+                           created: meta?.created,
+                           referenceText: meta?.referenceText ?? "",
+                           recording: kept ? wav : nil,
+                           bytes: VoiceStore.size(of: directory))
+        }
+        .sorted { ($0.created ?? .distantPast) > ($1.created ?? .distantPast) }
+    }
+
+    static func size(of directory: URL) -> Int {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        return files.reduce(0) {
+            $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        }
+    }
+
+    /// Whether a name can be a voice.
+    ///
+    /// It becomes a directory, so the rules are the file system's rather than
+    /// anybody's taste — but they have to be explained to a person, which is
+    /// why the reason comes back rather than just a no.
+    public static func problem(withName name: String) -> String? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "A voice needs a name." }
+        if trimmed.count > 60 { return "That name is too long." }
+        if trimmed.hasPrefix(".") { return "A name cannot start with a full stop." }
+        if trimmed.contains("/") || trimmed.contains(":") {
+            return "A name cannot contain a slash or a colon."
+        }
+        return nil
+    }
+
+    public func rename(_ name: String, to fresh: String) throws {
+        let trimmed = fresh.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let problem = VoiceStore.problem(withName: trimmed) {
+            throw MimicError.badVoice(problem)
+        }
+        guard trimmed != name else { return }
+        let source = root.appending(path: name)
+        let target = root.appending(path: trimmed)
+        guard FileManager.default.fileExists(atPath: source.path) else {
+            throw MimicError.badVoice("There is no voice called \(name).")
+        }
+        guard !FileManager.default.fileExists(atPath: target.path) else {
+            throw MimicError.badVoice("There is already a voice called \(trimmed).")
+        }
+        try FileManager.default.moveItem(at: source, to: target)
+
+        // meta.json carries the name too, and a profile whose folder and file
+        // disagree is the sort of thing that works until something reads it.
+        let metaURL = target.appending(path: "meta.json")
+        if let data = try? Data(contentsOf: metaURL),
+           var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            object["name"] = trimmed
+            try? JSONSerialization
+                .data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+                .write(to: metaURL)
+        }
+    }
+
+    public func delete(_ name: String) throws {
+        try FileManager.default.removeItem(at: root.appending(path: name))
+    }
+
     public func names() -> [String] {
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: root, includingPropertiesForKeys: nil)) ?? []
@@ -56,9 +153,21 @@ public struct VoiceStore: Sendable {
         return VoiceProfile(name: name, referenceText: meta.referenceText, codes: rows)
     }
 
-    private struct Meta: Decodable {
+    struct Meta: Decodable {
         let referenceText: String
-        enum CodingKeys: String, CodingKey { case referenceText = "reference_text" }
+        let created: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case referenceText = "reference_text"
+            case created = "created_at"
+        }
+
+        init(from decoder: any Swift.Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            referenceText = (try? values.decode(String.self, forKey: .referenceText)) ?? ""
+            let stamp = try? values.decode(String.self, forKey: .created)
+            created = stamp.flatMap { ISO8601DateFormatter().date(from: $0) }
+        }
     }
 }
 

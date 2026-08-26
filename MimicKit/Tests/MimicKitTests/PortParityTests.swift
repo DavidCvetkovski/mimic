@@ -774,3 +774,89 @@ final class ExportTests: XCTestCase {
             .dropFirst(8).contains("/"))
     }
 }
+
+/// Managing a voice library: listing, renaming, removing.
+final class VoiceLibraryTests: XCTestCase {
+
+    private var root: URL!
+    private var store: VoiceStore!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory
+            .appending(path: "mimic-voices-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        store = VoiceStore(root: root, numCodebooks: 10)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    /// A voice on disk is a directory with a meta.json; the rest is optional.
+    private func plant(_ name: String, created: String?, recording: Bool = false) throws {
+        let directory = root.appending(path: name)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var meta: [String: Any] = ["name": name, "reference_text": "a transcript"]
+        if let created { meta["created_at"] = created }
+        try JSONSerialization.data(withJSONObject: meta)
+            .write(to: directory.appending(path: "meta.json"))
+        if recording {
+            try Audio.wav([Float](repeating: 0.1, count: 1000), sampleRate: 44_100)
+                .write(to: directory.appending(path: "reference.wav"))
+        }
+    }
+
+    func testNewestFirst() throws {
+        try plant("Older", created: "2026-01-01T10:00:00Z")
+        try plant("Newer", created: "2026-08-01T10:00:00Z")
+        try plant("Undated", created: nil)
+        XCTAssertEqual(store.summaries().map(\.name), ["Newer", "Older", "Undated"])
+    }
+
+    func testItKnowsWhetherThereIsSomethingToPlay() throws {
+        try plant("Silent", created: nil)
+        try plant("Kept", created: nil, recording: true)
+        let found = Dictionary(uniqueKeysWithValues: store.summaries().map { ($0.name, $0) })
+        XCTAssertNil(found["Silent"]?.recording)
+        XCTAssertNotNil(found["Kept"]?.recording)
+        XCTAssertGreaterThan(found["Kept"]?.bytes ?? 0, 1000)
+    }
+
+    func testRenamingMovesTheProfileAndItsName() throws {
+        try plant("David", created: nil, recording: true)
+        try store.rename("David", to: "David — Bored")
+        XCTAssertEqual(store.names(), ["David — Bored"])
+
+        // meta.json carries the name as well, and the two must not disagree.
+        let meta = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: root.appending(path: "David — Bored/meta.json")))
+        XCTAssertEqual((meta as? [String: Any])?["name"] as? String, "David — Bored")
+        // And the recording came with it.
+        XCTAssertNotNil(store.summaries().first?.recording)
+    }
+
+    func testRenamingOntoAnExistingVoiceIsRefused() throws {
+        try plant("David", created: nil)
+        try plant("Jadranka", created: nil)
+        XCTAssertThrowsError(try store.rename("David", to: "Jadranka"))
+        XCTAssertEqual(store.names().count, 2, "a voice was lost")
+    }
+
+    /// A name becomes a directory, so these are the file system's rules —
+    /// but somebody has to be told which one they broke.
+    func testNamesThatCannotBe() {
+        XCTAssertNotNil(VoiceStore.problem(withName: ""))
+        XCTAssertNotNil(VoiceStore.problem(withName: "   "))
+        XCTAssertNotNil(VoiceStore.problem(withName: "a/b"))
+        XCTAssertNotNil(VoiceStore.problem(withName: ".hidden"))
+        XCTAssertNotNil(VoiceStore.problem(withName: String(repeating: "x", count: 61)))
+        XCTAssertNil(VoiceStore.problem(withName: "David — Bored"))
+        XCTAssertNil(VoiceStore.problem(withName: "Me, reading"))
+    }
+
+    func testDeleting() throws {
+        try plant("David", created: nil, recording: true)
+        try store.delete("David")
+        XCTAssertTrue(store.names().isEmpty)
+    }
+}

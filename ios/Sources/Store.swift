@@ -138,9 +138,31 @@ final class Store: ObservableObject {
         }
     }
 
+    /// The library, with enough about each voice to list it.
+    @Published private(set) var library: [VoiceStore.Summary] = []
+
     func refreshVoices() {
-        voices = runtime?.voices.names() ?? []
+        let store = runtime?.voices ?? VoiceStore(root: voicesDirectory)
+        library = store.summaries()
+        voices = library.map(\.name)
         if selected == nil || !voices.contains(selected!) { selected = voices.first }
+    }
+
+    /// Rename a voice. Returns why not, when it could not.
+    func rename(_ name: String, to fresh: String) -> String? {
+        let store = runtime?.voices ?? VoiceStore(root: voicesDirectory)
+        do {
+            try store.rename(name, to: fresh)
+        } catch {
+            return error.localizedDescription
+        }
+        // Audio cached under the old name is still this voice, but it is filed
+        // under a name that no longer exists, so it would never be found again.
+        runtime?.cache?.forget(voice: name)
+        let wasSelected = selected == name
+        refreshVoices()
+        if wasSelected { selected = fresh.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return nil
     }
 
     // MARK: - Speaking
@@ -360,6 +382,51 @@ final class Store: ObservableObject {
         await reloadEngine()
         refreshVoices()
         selected = name
+    }
+
+    // MARK: - What is on the disk
+
+    struct Sizes {
+        var model = 0
+        var voices = 0
+        var cache = 0
+        var writer = 0
+    }
+
+    func sizes() -> Sizes {
+        var found = Sizes()
+        found.voices = Store.bytes(under: voicesDirectory)
+        found.cache = Store.bytes(under: cacheDirectory)
+        // The writer is counted separately although it sits beside the speech
+        // model: it is the one part somebody might reasonably want back.
+        let writerFiles = ModelDownload.writing.map { modelDirectory.appending(path: $0.local) }
+        found.writer = writerFiles.reduce(0) { $0 + Store.bytes(of: $1) }
+        found.model = max(Store.bytes(under: modelDirectory) - found.writer, 0)
+        return found
+    }
+
+    private static func bytes(of file: URL) -> Int {
+        (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+    }
+
+    private static func bytes(under directory: URL) -> Int {
+        guard let walker = FileManager.default.enumerator(
+            at: directory, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        var total = 0
+        for case let url as URL in walker { total += bytes(of: url) }
+        return total
+    }
+
+    func clearCache() {
+        runtime?.cache?.empty()
+    }
+
+    /// Remove the writing model, leaving everything else alone.
+    func removeWriter() {
+        for file in ModelDownload.writing {
+            try? FileManager.default.removeItem(at: modelDirectory.appending(path: file.local))
+        }
+        objectWillChange.send()
     }
 
     /// Surface a problem in the one status line the controls already have.

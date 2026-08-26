@@ -52,7 +52,7 @@ struct RootView: View {
             case .checking, .loading:
                 Waiting(message: store.stage == .loading ? "Loading the model…" : "")
             case .needsModel:
-                FirstRun()
+                Welcome()
             case .downloading(let fraction, let note):
                 Downloading(fraction: fraction, note: note)
             case .ready:
@@ -72,27 +72,6 @@ private struct Waiting: View {
             if !message.isEmpty {
                 Text(message).font(.callout).foregroundStyle(.secondary)
             }
-        }
-    }
-}
-
-private struct FirstRun: View {
-    @EnvironmentObject private var store: Store
-    var body: some View {
-        VStack(spacing: 22) {
-            Spacer()
-            Wordmark()
-            Text("The model runs on this phone, so it has to live here. "
-                 + "About 600 megabytes, downloaded once.")
-                .font(.callout)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 34)
-            Button("Download the model") { Task { await store.download() } }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-            Text("Best on Wi-Fi.").font(.caption).foregroundStyle(.tertiary)
-            Spacer()
         }
     }
 }

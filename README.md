@@ -85,6 +85,31 @@ for a given seed, so a passage is kept on disk under its voice, seed and words
 and read back instead of remade. It matters most on the phone, where re-rendering
 something you just listened to would cost the whole wait again.
 
+## The app, not the demo
+
+The iPhone app is the one meant to be lived with rather than shown once, so it
+has the parts a demo does not:
+
+**A first run that explains itself.** Six hundred megabytes is a lot to ask of
+somebody who has not heard it work, and the reason it is that large — the model
+is on the phone — is the same reason the app is worth having. So it says so,
+before it asks.
+
+**A voice library.** People end up with several of themselves: bored, awake,
+doing an accent. Each one can be played back, renamed and deleted, and the
+recording it was made from is kept, because hearing it is the only way to tell
+two of your own apart. Renaming moves the profile and the name inside it
+together, and drops audio cached under the old name — which would otherwise be
+filed under a name that no longer exists.
+
+**Somewhere to see what it costs.** Which megabytes are the voice model, which
+are the writer, which are cached audio, and a button for each that can be got
+back. An app that downloads a gigabyte owes somebody that page.
+
+**A way out.** Any passage saves as an M4A or as a video — black picture, your
+voice — through the ordinary share sheet, so Files, WhatsApp, the camera roll
+and AirDrop all work without the app knowing about any of them.
+
 ## Something to say
 
 Most people open a text-to-speech app with nothing prepared, and a blank box is

@@ -7,6 +7,8 @@ struct SpeakView: View {
     @Environment(\.colorScheme) private var scheme
     @FocusState private var writing: Bool
     @State private var recording = false
+    @State private var voices = false
+    @State private var about = false
     @StateObject private var writer = Writer()
     @State private var askingFor = false
     @State private var sharing: Shareable?
@@ -46,9 +48,16 @@ struct SpeakView: View {
             .navigationTitle("")
             .toolbar {
                 ToolbarItem(placement: .principal) { Wordmark() }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { about = true } label: {
+                        Label("About", systemImage: "gearshape")
+                    }
+                }
+                // The library rather than a bare "record": once there are
+                // several of you, managing them is the commoner errand.
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { recording = true } label: {
-                        Label("Add a voice", systemImage: "mic.badge.plus")
+                    Button { voices = true } label: {
+                        Label("Voices", systemImage: "person.wave.2")
                     }
                     .disabled(store.isSpeaking)
                 }
@@ -63,6 +72,12 @@ struct SpeakView: View {
             }
             .sheet(isPresented: $recording) {
                 RecordView().environmentObject(store)
+            }
+            .sheet(isPresented: $voices) {
+                VoicesView().environmentObject(store)
+            }
+            .sheet(isPresented: $about) {
+                SettingsView(writer: writer).environmentObject(store)
             }
             .sheet(item: $sharing) { ShareSheet(items: [$0.url]) }
             .sheet(isPresented: $askingFor) {
@@ -171,10 +186,17 @@ struct SpeakView: View {
         VStack(alignment: .leading, spacing: 10) {
             Label2("IN WHICH VOICE")
             if store.voices.isEmpty {
-                Text("No voices yet. Tap the microphone to record one — "
-                     + "about fifteen seconds is all it needs.")
-                    .font(.footnote).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    voices = true
+                } label: {
+                    Label("Record your voice — about fifteen seconds",
+                          systemImage: "mic.badge.plus")
+                        .font(.subheadline)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(Palette.blood.opacity(0.12), in: Capsule())
+                        .foregroundStyle(Palette.blood)
+                }
+                .buttonStyle(.plain)
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
