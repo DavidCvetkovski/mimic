@@ -82,6 +82,24 @@ public final class StreamPlayer: ObservableObject {
         return min(duration * rate, banked * rate)
     }
 
+    /// Everything played so far, in order — for saving it somewhere.
+    ///
+    /// Reconstructed from the buffers that were handed to the node rather than
+    /// kept a second time: they are already retained so that playback can start
+    /// again, and a passage is a few megabytes.
+    public var samples: [Float] {
+        var all: [Float] = []
+        all.reserveCapacity(rendered.reduce(0) { $0 + Int($1.frameLength) })
+        for buffer in rendered {
+            guard let channel = buffer.floatChannelData?[0] else { continue }
+            all.append(contentsOf: UnsafeBufferPointer(start: channel,
+                                                       count: Int(buffer.frameLength)))
+        }
+        return all
+    }
+
+    public var sampleRate: Int { Int(format?.sampleRate ?? 44_100) }
+
     public func reset() {
         stop()
         rendered.removeAll()

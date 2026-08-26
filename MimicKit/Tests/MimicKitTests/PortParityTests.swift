@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import XCTest
 @testable import MimicKit
@@ -692,5 +693,84 @@ final class ProseTests: XCTestCase {
         // But a quotation inside a passage is left where it is.
         XCTAssertEqual(Prose.spoken("She said \"hello\" and left."),
                        "She said \"hello\" and left.")
+    }
+}
+
+/// Saving a passage as a file somebody can keep or send.
+final class ExportTests: XCTestCase {
+
+    private var scratch: URL!
+
+    override func setUpWithError() throws {
+        scratch = FileManager.default.temporaryDirectory
+            .appending(path: "mimic-export-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: scratch)
+    }
+
+    /// Three seconds of a tone, which is enough to be a real file.
+    private func tone(seconds: Double, rate: Int = 44_100) -> [Float] {
+        (0..<Int(seconds * Double(rate))).map {
+            sinf(Float($0) * 2 * .pi * 220 / Float(rate)) * 0.4
+        }
+    }
+
+    func testTheAudioIsSmallerThanTheWavAndStillPlays() throws {
+        let samples = tone(seconds: 3)
+        let url = scratch.appending(path: "voice.m4a")
+        try Export.m4a(samples: samples, sampleRate: 44_100, to: url)
+
+        let written = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int ?? 0
+        XCTAssertGreaterThan(written, 1_000, "suspiciously small")
+        // The point of the format. 16-bit mono WAV would be two bytes a sample;
+        // this must be a good deal less, or there is no reason to encode at all.
+        let asWav = samples.count * 2
+        XCTAssertLessThan(written, asWav / 2, "barely smaller than a WAV")
+
+        let file = try AVAudioFile(forReading: url)
+        XCTAssertEqual(file.length > 0, true)
+        let seconds = Double(file.length) / file.fileFormat.sampleRate
+        XCTAssertEqual(seconds, 3, accuracy: 0.2, "the audio changed length")
+    }
+
+    func testNothingToSaveIsAnError() {
+        XCTAssertThrowsError(
+            try Export.m4a(samples: [], sampleRate: 44_100,
+                           to: scratch.appending(path: "empty.m4a")))
+    }
+
+    /// The one that is easy to get subtly wrong: a video whose picture ends
+    /// before the voice does, so the last words are cut off.
+    func testTheVideoLastsAsLongAsTheVoice() async throws {
+        let samples = tone(seconds: 3)
+        let url = scratch.appending(path: "voice.mp4")
+        try await Export.video(samples: samples, sampleRate: 44_100, to: url, side: 240)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        let asset = AVAsset(url: url)
+        let duration = try await asset.load(.duration).seconds
+        XCTAssertEqual(duration, 3, accuracy: 0.3, "the video is not the length of the audio")
+
+        let video = try await asset.loadTracks(withMediaType: .video)
+        let audio = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertEqual(video.count, 1, "no picture")
+        XCTAssertEqual(audio.count, 1, "no sound")
+    }
+
+    func testFileNamesAreRecognisable() {
+        XCTAssertEqual(
+            Export.fileName(for: "To be, or not to be, that is the question.",
+                            voice: "David", extension: "m4a"),
+            // The first five words, which is what fits and what identifies it.
+            "David — To be or not to.m4a")
+        // Nothing to go on, so the voice alone.
+        XCTAssertEqual(Export.fileName(for: "   ", voice: "David", extension: "mp4"),
+                       "David.mp4")
+        // Punctuation that a file system would rather not see.
+        XCTAssertFalse(Export.fileName(for: "a/b:c", voice: "David", extension: "m4a")
+            .dropFirst(8).contains("/"))
     }
 }

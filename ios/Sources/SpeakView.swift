@@ -9,6 +9,8 @@ struct SpeakView: View {
     @State private var recording = false
     @StateObject private var writer = Writer()
     @State private var askingFor = false
+    @State private var sharing: Shareable?
+    @State private var preparing = false
 
     var body: some View {
         NavigationStack {
@@ -62,6 +64,7 @@ struct SpeakView: View {
             .sheet(isPresented: $recording) {
                 RecordView().environmentObject(store)
             }
+            .sheet(item: $sharing) { ShareSheet(items: [$0.url]) }
             .sheet(isPresented: $askingFor) {
                 WriteSheet(writer: writer) { store.text = $0 }
                     .environmentObject(store)
@@ -205,6 +208,36 @@ struct SpeakView: View {
         return writer.isWriting ? "Writing…" : "Write me one"
     }
 
+    /// Saving it: audio for a chat, video for everywhere that only takes video.
+    @ViewBuilder private var shareButton: some View {
+        if store.canExport {
+            Menu {
+                Button("Save the audio", systemImage: "waveform") { share(video: false) }
+                Button("Save as a video", systemImage: "film") { share(video: true) }
+            } label: {
+                Image(systemName: preparing ? "hourglass" : "square.and.arrow.up")
+                    .font(.system(size: 15))
+                    .frame(width: 30, height: 30)
+                    .foregroundStyle(Palette.blood)
+            }
+            .disabled(preparing)
+        }
+    }
+
+    private func share(video: Bool) {
+        preparing = true
+        Task {
+            defer { preparing = false }
+            do {
+                let url = video ? try await store.exportVideo()
+                                : try await store.exportAudio()
+                sharing = Shareable(url: url)
+            } catch {
+                store.report(error.localizedDescription)
+            }
+        }
+    }
+
     /// An arrow while there is something to fetch, a wand once there is not.
     private var writerIcon: String {
         if store.writerFraction != nil { return "arrow.down.circle" }
@@ -301,6 +334,8 @@ struct SpeakView: View {
                 .lineLimit(1)
                 // Wide enough for "0:00 / ~0:09" on one line; at 88 it wrapped.
                 .fixedSize()
+
+            shareButton
         }
         .padding(.top, 4)
     }

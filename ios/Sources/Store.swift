@@ -362,6 +362,35 @@ final class Store: ObservableObject {
         selected = name
     }
 
+    /// Surface a problem in the one status line the controls already have.
+    func report(_ what: String) { problem = what }
+
+    // MARK: - Saving it somewhere
+
+    /// True once there is a finished passage worth exporting.
+    var canExport: Bool { player.isComplete && player.buffered > 0 }
+
+    /// Write the audio out, and hand back the file for the share sheet.
+    func exportAudio() async throws -> URL {
+        let name = Export.fileName(for: text, voice: selected ?? "Mimic", extension: "m4a")
+        let url = FileManager.default.temporaryDirectory.appending(path: name)
+        let samples = player.samples
+        let rate = player.sampleRate
+        try await Task.detached(priority: .userInitiated) {
+            try Export.m4a(samples: samples, sampleRate: rate, to: url)
+        }.value
+        return url
+    }
+
+    /// The same audio over a black picture, for the places that take video and
+    /// not sound.
+    func exportVideo() async throws -> URL {
+        let name = Export.fileName(for: text, voice: selected ?? "Mimic", extension: "mp4")
+        let url = FileManager.default.temporaryDirectory.appending(path: name)
+        try await Export.video(samples: player.samples, sampleRate: player.sampleRate, to: url)
+        return url
+    }
+
     // MARK: - Writing
 
     /// Fetch the writing model, on request and never otherwise.
