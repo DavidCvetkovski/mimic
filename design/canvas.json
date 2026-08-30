@@ -1,0 +1,55 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Landing \u2014 on ink"
+    },
+    {
+      "file": "Light.dc.html",
+      "x": 510,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Landing \u2014 on paper"
+    },
+    {
+      "file": "Speak.dc.html",
+      "x": 1020,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Speak, in the new tokens"
+    },
+    {
+      "file": "Palette.dc.html",
+      "x": 0,
+      "y": 964,
+      "w": 1180,
+      "h": 700,
+      "title": "The palette"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "the-grey",
+      "x": 1240,
+      "y": 964,
+      "w": 260,
+      "text": "The one real finding:\n\n21 places in the app use the iOS system .secondary / .tertiary. Those greys are cool and neutral, and every caption sits slightly blue on warm paper.\n\nThat, more than the layout, is why it read unfinished."
+    },
+    {
+      "id": "landing-note",
+      "x": 0,
+      "y": -150,
+      "w": 390,
+      "text": "Landing, cut to the bone: nineteen words of body copy instead of ninety.\n\nThe three explained points are gone \u2014 they were arguing before anyone had heard it work. What is left is the promise, one line of substance, and the price.\n\nThe waveform breathes; everything else rises once and stops."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

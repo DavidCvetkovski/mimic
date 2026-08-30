@@ -4,7 +4,6 @@ import SwiftUI
 /// The app proper: type something, pick a voice, hear it.
 struct SpeakView: View {
     @EnvironmentObject private var store: Store
-    @Environment(\.colorScheme) private var scheme
     @FocusState private var writing: Bool
     @State private var recording = false
     @State private var voices = false
@@ -44,7 +43,7 @@ struct SpeakView: View {
             // keeps the bar clear of the home indicator and lets the scroll
             // view above it know how much room it actually has.
             .safeAreaInset(edge: .bottom, spacing: 0) { controls }
-            .background(Palette.background(scheme))
+            .background(Palette.background)
             .navigationTitle("")
             .toolbar {
                 ToolbarItem(placement: .principal) { Wordmark() }
@@ -119,8 +118,8 @@ struct SpeakView: View {
                 .scrollContentBackground(.hidden)
                 .frame(height: 210)
                 .padding(12)
-                .background(Palette.card(scheme))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.separator))
+                .background(Palette.card)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.rule))
         }
     }
 
@@ -159,10 +158,10 @@ struct SpeakView: View {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(preset.label).font(.subheadline)
                                 Text(preset.source)
-                                    .font(.caption2).foregroundStyle(.secondary)
+                                    .font(.caption2).foregroundStyle(Palette.inkMuted)
                             }
                             .padding(.horizontal, 14).padding(.vertical, 7)
-                            .background(.quaternary, in: Capsule())
+                            .background(Palette.chip, in: Capsule())
                         }
                         .buttonStyle(.plain)
                         .disabled(store.isSpeaking)
@@ -172,7 +171,7 @@ struct SpeakView: View {
             }
             if let why = writer.readiness(canWrite: store.canWrite).reason,
                writer.problem == nil {
-                Text(why).font(.caption2).foregroundStyle(.tertiary)
+                Text(why).font(.caption2).foregroundStyle(Palette.inkFaint)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let problem = writer.problem {
@@ -206,7 +205,7 @@ struct SpeakView: View {
                                 .font(.subheadline)
                                 .padding(.horizontal, 15).padding(.vertical, 9)
                                 .background(chosen ? AnyShapeStyle(Palette.blood)
-                                                   : AnyShapeStyle(.quaternary),
+                                                   : AnyShapeStyle(Palette.chip),
                                             in: Capsule())
                                 .foregroundStyle(chosen ? AnyShapeStyle(.white)
                                                         : AnyShapeStyle(.primary))
@@ -280,7 +279,7 @@ struct SpeakView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(store.isSpeaking ? Color.secondary : Palette.blood)
+            .tint(store.isSpeaking ? Palette.inkMuted : Palette.blood)
             .controlSize(.large)
             .disabled(!store.isSpeaking
                       && (store.selected == nil
@@ -306,10 +305,10 @@ struct SpeakView: View {
             Label(store.waitLabel, systemImage: "hourglass")
                 .font(.caption).foregroundStyle(Palette.blood)
         } else if !store.progress.isEmpty {
-            Text(store.progress).font(.caption).foregroundStyle(.secondary)
+            Text(store.progress).font(.caption).foregroundStyle(Palette.inkMuted)
         } else if !store.lastTiming.isEmpty, !store.isSpeaking {
             Text(store.lastTiming)
-                .font(.caption).foregroundStyle(.tertiary).monospacedDigit()
+                .font(.caption).foregroundStyle(Palette.inkFaint).monospacedDigit()
         }
     }
 
@@ -338,7 +337,7 @@ struct SpeakView: View {
                     ? max(store.player.buffered, 0.1)
                     : max(store.player.buffered, store.estimate, 0.1)
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.quaternary)
+                    Capsule().fill(Palette.rule)
                     Capsule().fill(Palette.blood).opacity(0.28)
                         .frame(width: geometry.size.width
                                * min(1, store.player.buffered / total))
@@ -352,7 +351,7 @@ struct SpeakView: View {
             Text(clockLabel)
                 .font(.system(.caption, design: .monospaced))
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Palette.inkMuted)
                 .lineLimit(1)
                 // Wide enough for "0:00 / ~0:09" on one line; at 88 it wrapped.
                 .fixedSize()
@@ -381,6 +380,6 @@ struct Label2: View {
         Text(text)
             .font(.system(size: 10, weight: .semibold))
             .tracking(1.6)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Palette.inkMuted)
     }
 }

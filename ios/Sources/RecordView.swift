@@ -11,7 +11,6 @@ import SwiftUI
 struct RecordView: View {
     @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var scheme
     @StateObject private var recorder = Recorder()
 
     @State private var name = ""
@@ -36,7 +35,7 @@ struct RecordView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(14)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Palette.card(scheme))
+                        .background(Palette.card)
                         .overlay(Rectangle().frame(width: 2)
                             .foregroundStyle(Palette.blood), alignment: .leading)
 
@@ -44,7 +43,7 @@ struct RecordView: View {
 
                     Text("About fifteen seconds is ideal. Read it as written — "
                          + "longer or noisier makes the clone worse, not better.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                        .font(.footnote).foregroundStyle(Palette.inkMuted)
                         .fixedSize(horizontal: false, vertical: true)
 
                     if !recorder.samples.isEmpty && !recorder.isRecording {
@@ -69,13 +68,13 @@ struct RecordView: View {
                     if !store.canRecord && !saving {
                         Label("Cloning needs a one-off 400 MB download the first time.",
                               systemImage: "arrow.down.circle")
-                            .font(.caption).foregroundStyle(.tertiary)
+                            .font(.caption).foregroundStyle(Palette.inkFaint)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(20)
             }
-            .background(Palette.background(scheme))
+            .background(Palette.background)
             .navigationTitle("Add a voice")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -101,7 +100,7 @@ struct RecordView: View {
 
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.quaternary)
+                    Capsule().fill(Palette.rule)
                     Capsule().fill(Palette.blood)
                         .frame(width: geometry.size.width * recorder.level)
                         .animation(.linear(duration: 0.06), value: recorder.level)
@@ -113,7 +112,7 @@ struct RecordView: View {
                 .font(.system(.callout, design: .monospaced))
                 .monospacedDigit()
                 .foregroundStyle(Recorder.idealRange.contains(recorder.seconds)
-                                 ? AnyShapeStyle(Palette.blood) : AnyShapeStyle(.secondary))
+                                 ? AnyShapeStyle(Palette.blood) : AnyShapeStyle(Palette.inkMuted))
                 .frame(width: 54, alignment: .trailing)
         }
     }

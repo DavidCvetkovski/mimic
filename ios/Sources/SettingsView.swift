@@ -10,7 +10,6 @@ struct SettingsView: View {
     @EnvironmentObject private var store: Store
     @ObservedObject var writer: Writer
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var scheme
 
     @State private var sizes = Store.Sizes()
     @State private var confirmingWriterRemoval = false
@@ -79,9 +78,10 @@ struct SettingsView: View {
                          + "Clone your own voice, or one you have permission to use.")
                 }
             }
+            .listRowBackground(Palette.card)
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
-            .background(Palette.background(scheme))
+            .background(Palette.background)
             .navigationTitle("About")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -108,7 +108,7 @@ struct SettingsView: View {
             Spacer()
             Text(bytes == 0 ? "—"
                  : ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))
-                .foregroundStyle(.secondary).monospacedDigit()
+                .foregroundStyle(Palette.inkMuted).monospacedDigit()
         }
     }
 
@@ -132,11 +132,11 @@ private struct Credit: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name).foregroundStyle(.primary)
                     Text("\(role) · \(licence)")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(Palette.inkMuted)
                 }
                 Spacer()
                 Image(systemName: "arrow.up.right")
-                    .font(.caption).foregroundStyle(.tertiary)
+                    .font(.caption).foregroundStyle(Palette.inkFaint)
             }
         }
     }

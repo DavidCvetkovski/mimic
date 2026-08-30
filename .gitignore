@@ -19,3 +19,6 @@ DerivedData/
 
 # Personal signing team — see ios/Signing.xcconfig
 ios/Local.xcconfig
+
+# The seeded design canvas — 2 MB of editor, regenerated from design/*.dc.html
+design/*.html

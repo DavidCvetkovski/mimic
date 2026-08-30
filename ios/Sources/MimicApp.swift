@@ -17,27 +17,51 @@ struct MimicApp: App {
 /// The same warm paper and oxblood as the web app, so the two read as one
 /// product rather than two projects that happen to share a model.
 enum Palette {
-    /// Oxblood on paper, and something closer to a rust on the dark ground.
-    ///
-    /// It was one fixed colour, and the app is tinted with it — so in the dark
-    /// scheme every button, and the text on every tinted chip, was a dark red
-    /// on a near-black background and effectively unreadable. A dynamic colour
-    /// fixes all of them at once, rather than each call site learning about the
-    /// colour scheme.
-    static let blood = Color(UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.757, green: 0.286, blue: 0.267, alpha: 1)
-            : UIColor(red: 0.486, green: 0.145, blue: 0.161, alpha: 1)
-    })
-    static let paper = Color(red: 0.949, green: 0.929, blue: 0.890)
-    static let ink = Color(red: 0.106, green: 0.094, blue: 0.082)
 
-    static func background(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(red: 0.086, green: 0.078, blue: 0.059) : paper
+    /// One warm family, in two grounds.
+    ///
+    /// Every colour here is dynamic, so no view has to know which scheme it is
+    /// in — the seven that read `@Environment(\.colorScheme)` did so almost
+    /// entirely to pass it back to this type.
+    ///
+    /// The greys are the reason this exists. The app used `.secondary` and
+    /// `.tertiary` in twenty-six places; those are the system's neutral-cool
+    /// greys, and on paper this warm they read faintly blue — which is what
+    /// made a carefully typeset screen look unfinished.
+    private static func dynamic(dark: UInt32, light: UInt32) -> Color {
+        Color(UIColor { $0.userInterfaceStyle == .dark
+            ? UIColor(hex: dark) : UIColor(hex: light) })
     }
-    static func card(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(red: 0.118, green: 0.106, blue: 0.086)
-                        : Color(red: 0.980, green: 0.969, blue: 0.941)
+
+    /// Oxblood on paper; on ink, half a step warmer and lighter so it is a
+    /// colour rather than an alarm. 4.6:1 on the dark ground.
+    static let blood      = dynamic(dark: 0xCA5A4E, light: 0x7C2529)
+
+    static let background = dynamic(dark: 0x14120F, light: 0xF3EEE4)
+    static let card       = dynamic(dark: 0x1E1B16, light: 0xFBF8F1)
+    /// A chip, a track, anything a shade off the ground.
+    static let chip       = dynamic(dark: 0x201D18, light: 0xEBE4D6)
+
+    static let ink        = dynamic(dark: 0xF2EDE3, light: 0x1C1917)
+    /// What `.secondary` was: captions, subtitles, the second line.
+    static let inkMuted   = dynamic(dark: 0xA79C8E, light: 0x6B6259)
+    /// What `.tertiary` was: the quietest thing that is still meant to be read.
+    static let inkFaint   = dynamic(dark: 0x6E655A, light: 0x948A80)
+    /// Hairlines. Editorial rules, not system separators.
+    static let rule       = dynamic(dark: 0x2B2620, light: 0xDFD6C7)
+
+    /// The paper itself, for the rare place that wants it whichever scheme it
+    /// is in — the label on a filled oxblood button.
+    static let paper      = Color(red: 0.949, green: 0.929, blue: 0.890)
+}
+
+extension UIColor {
+    /// 0xRRGGBB, because a palette reads better as hex than as thirds.
+    convenience init(hex: UInt32) {
+        self.init(red:   CGFloat((hex >> 16) & 0xFF) / 255,
+                  green: CGFloat((hex >> 8) & 0xFF) / 255,
+                  blue:  CGFloat(hex & 0xFF) / 255,
+                  alpha: 1)
     }
 }
 
@@ -47,7 +71,7 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
-            Palette.background(scheme).ignoresSafeArea()
+            Palette.background.ignoresSafeArea()
             switch store.stage {
             case .checking, .loading:
                 Waiting(message: store.stage == .loading ? "Loading the model…" : "")
@@ -70,7 +94,7 @@ private struct Waiting: View {
         VStack(spacing: 14) {
             ProgressView()
             if !message.isEmpty {
-                Text(message).font(.callout).foregroundStyle(.secondary)
+                Text(message).font(.callout).foregroundStyle(Palette.inkMuted)
             }
         }
     }
@@ -89,7 +113,7 @@ private struct Downloading: View {
             Text(note.isEmpty
                  ? "\(Int(fraction * 100))%"
                  : "\(Int(fraction * 100))% — \(note)")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(.callout).foregroundStyle(Palette.inkMuted)
                 .monospacedDigit()
             Spacer()
         }
@@ -106,7 +130,7 @@ private struct Failed: View {
                 .font(.largeTitle).foregroundStyle(Palette.blood)
             Text(reason)
                 .font(.callout).multilineTextAlignment(.center)
-                .foregroundStyle(.secondary).padding(.horizontal, 30)
+                .foregroundStyle(Palette.inkMuted).padding(.horizontal, 30)
             Button("Try again") { Task { await store.load() } }
                 .buttonStyle(.bordered)
             Spacer()

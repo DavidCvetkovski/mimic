@@ -11,7 +11,6 @@ struct WriteSheet: View {
     @EnvironmentObject private var store: Store
     @ObservedObject var writer: Writer
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var scheme
 
     /// Remembered between launches, because it is a preference rather than a
     /// decision somebody wants to make every time.
@@ -48,8 +47,8 @@ struct WriteSheet: View {
                         .lineLimit(1...4)
                         .focused($typing)
                         .padding(12)
-                        .background(Palette.card(scheme))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.separator))
+                        .background(Palette.card)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.rule))
 
                     if available.count > 1 {
                         VStack(alignment: .leading, spacing: 8) {
@@ -59,12 +58,12 @@ struct WriteSheet: View {
                             }
                             .pickerStyle(.segmented)
                             Text(effective?.note ?? "")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.caption).foregroundStyle(Palette.inkMuted)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     } else if let only = effective {
                         Text(only.note)
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(Palette.inkMuted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
@@ -83,7 +82,7 @@ struct WriteSheet: View {
                         .disabled(downloading || store.writerFraction != nil)
                         Text("A small language model, about 470 MB, kept on this phone. "
                              + "It works with no signal, and it does not decline.")
-                            .font(.caption2).foregroundStyle(.tertiary)
+                            .font(.caption2).foregroundStyle(Palette.inkFaint)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
@@ -95,7 +94,7 @@ struct WriteSheet: View {
                 }
                 .padding(22)
             }
-            .background(Palette.background(scheme))
+            .background(Palette.background)
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
                 Button {

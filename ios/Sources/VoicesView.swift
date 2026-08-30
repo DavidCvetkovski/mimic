@@ -11,7 +11,6 @@ import SwiftUI
 struct VoicesView: View {
     @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var scheme
 
     @State private var recording = false
     @State private var renaming: VoiceStore.Summary?
@@ -25,7 +24,7 @@ struct VoicesView: View {
             Group {
                 if store.library.isEmpty { empty } else { list }
             }
-            .background(Palette.background(scheme))
+            .background(Palette.background)
             .navigationTitle("Voices")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -74,7 +73,7 @@ struct VoicesView: View {
             Text("Read a short paragraph aloud — about fifteen seconds — and this "
                  + "phone will learn how you sound. It happens here; the recording "
                  + "is not sent anywhere.")
-                .font(.footnote).foregroundStyle(.secondary)
+                .font(.footnote).foregroundStyle(Palette.inkMuted)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 40)
@@ -92,6 +91,9 @@ struct VoicesView: View {
             Section {
                 ForEach(store.library) { voice in
                     row(for: voice)
+                        // The system's grouped rows are .systemBackground —
+                        // pure white, and cool against paper this warm.
+                        .listRowBackground(Palette.card)
                 }
             } footer: {
                 Text("Voice profiles are the same format the Mac app uses, so one "
@@ -110,10 +112,10 @@ struct VoicesView: View {
                 Image(systemName: playing == voice.name ? "stop.fill" : "play.fill")
                     .font(.system(size: 11, weight: .bold))
                     .frame(width: 30, height: 30)
-                    .background(voice.recording == nil ? AnyShapeStyle(.quaternary)
+                    .background(voice.recording == nil ? AnyShapeStyle(Palette.chip)
                                                        : AnyShapeStyle(Palette.blood),
                                 in: Circle())
-                    .foregroundStyle(voice.recording == nil ? AnyShapeStyle(.tertiary)
+                    .foregroundStyle(voice.recording == nil ? AnyShapeStyle(Palette.inkFaint)
                                                             : AnyShapeStyle(.white))
             }
             .buttonStyle(.plain)
@@ -122,7 +124,7 @@ struct VoicesView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(voice.name).font(.body)
                 Text(subtitle(for: voice))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(Palette.inkMuted)
             }
             Spacer()
             if store.selected == voice.name {
