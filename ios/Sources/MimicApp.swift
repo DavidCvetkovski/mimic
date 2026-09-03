@@ -131,8 +131,11 @@ private struct Failed: View {
             Text(reason)
                 .font(.callout).multilineTextAlignment(.center)
                 .foregroundStyle(Palette.inkMuted).padding(.horizontal, 30)
-            Button("Try again") { Task { await store.load() } }
-                .buttonStyle(.bordered)
+            Button(store.recoveryNeedsDownload ? "Resume the download" : "Try again") {
+                Task { await store.retry() }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Palette.blood)
             Spacer()
         }
     }

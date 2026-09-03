@@ -282,7 +282,7 @@ struct SpeakView: View {
             .tint(store.isSpeaking ? Palette.inkMuted : Palette.blood)
             .controlSize(.large)
             .disabled(!store.isSpeaking
-                      && (store.selected == nil
+                      && (store.selected == nil || !store.canSpeak
                           || store.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
 
             status
@@ -297,7 +297,12 @@ struct SpeakView: View {
     /// that run, in the order you care about it: what went wrong, then how long
     /// you are waiting, then where it has got to, then what it cost.
     @ViewBuilder private var status: some View {
-        if let problem = store.problem {
+        if let busy = store.busy {
+            // The engine is deliberately down. Saying so is the difference
+            // between "in a moment" and a button that does nothing.
+            Label(busy, systemImage: "hourglass")
+                .font(.caption).foregroundStyle(Palette.inkMuted)
+        } else if let problem = store.problem {
             Label(problem, systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(Palette.blood)
                 .fixedSize(horizontal: false, vertical: true)

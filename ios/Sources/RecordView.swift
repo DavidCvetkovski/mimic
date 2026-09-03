@@ -41,12 +41,13 @@ struct RecordView: View {
 
                     recordRow
 
-                    Text("About fifteen seconds is ideal. Read it as written — "
-                         + "longer or noisier makes the clone worse, not better.")
-                        .font(.footnote).foregroundStyle(Palette.inkMuted)
+                    Text(guidance)
+                        .font(.footnote)
+                        .foregroundStyle(recorder.reachedLimit ? Palette.blood
+                                                               : Palette.inkMuted)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if !recorder.samples.isEmpty && !recorder.isRecording {
+                    if recorder.hasRecording && !recorder.isRecording {
                         Button("Play it back", systemImage: "play.circle") { playBack() }
                             .font(.callout)
                         TextField("Name this voice — “Me, reading”", text: $name)
@@ -83,8 +84,7 @@ struct RecordView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(saving ? "Saving…" : "Save") { Task { await save() } }
-                        .disabled(recorder.samples.isEmpty || recorder.isRecording
-                                  || name.trimmingCharacters(in: .whitespaces).isEmpty || saving)
+                        .disabled(!canSave)
                 }
             }
         }
@@ -117,8 +117,29 @@ struct RecordView: View {
         }
     }
 
+    /// Everything that has to be true before there is a voice to save.
+    private var canSave: Bool {
+        recorder.hasRecording && !recorder.isRecording && !saving
+            && recorder.seconds >= Recorder.shortest
+            && !name.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// One line that changes with the situation rather than four that do not.
+    private var guidance: String {
+        if recorder.reachedLimit {
+            return "That is as much as it can use — thirty seconds is the limit. "
+                 + "Save it, or record again."
+        }
+        if recorder.hasRecording, recorder.seconds < Recorder.shortest {
+            return "Too short to learn a voice from. Read the paragraph through — "
+                 + "about fifteen seconds."
+        }
+        return "About fifteen seconds is ideal. Read it as written — longer or "
+             + "noisier makes the clone worse, not better."
+    }
+
     private var buttonLabel: String {
-        recorder.samples.isEmpty ? "Record" : "Again"
+        recorder.hasRecording ? "Again" : "Record"
     }
 
     private func toggle() async {

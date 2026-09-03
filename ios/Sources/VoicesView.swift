@@ -14,10 +14,12 @@ struct VoicesView: View {
 
     @State private var recording = false
     @State private var renaming: VoiceStore.Summary?
+    @State private var deleting: VoiceStore.Summary?
     @State private var fresh = ""
     @State private var problem: String?
     @State private var playing: String?
     @State private var player: AVAudioPlayer?
+    @State private var run = 0
 
     var body: some View {
         NavigationStack {
@@ -52,6 +54,21 @@ struct VoicesView: View {
                 }
             } message: {
                 Text("What should this voice be called?")
+            }
+            // A voice costs a recording and a registration and cannot be got
+            // back, which is more than a swipe should be able to spend.
+            .confirmationDialog("Delete this voice?",
+                                isPresented: .init(get: { deleting != nil },
+                                                   set: { if !$0 { deleting = nil } }),
+                                titleVisibility: .visible) {
+                Button("Delete \(deleting?.name ?? "")", role: .destructive) {
+                    if let voice = deleting { store.delete(voice.name) }
+                    deleting = nil
+                }
+                Button("Keep it", role: .cancel) { deleting = nil }
+            } message: {
+                Text("The recording and the profile go with it. Recording another "
+                     + "takes about fifteen seconds.")
             }
             .alert("That name will not work", isPresented: .init(
                 get: { problem != nil }, set: { if !$0 { problem = nil } })) {
@@ -136,7 +153,7 @@ struct VoicesView: View {
         .contentShape(Rectangle())
         .onTapGesture { store.selected = voice.name }
         .swipeActions(edge: .trailing) {
-            Button(role: .destructive) { store.delete(voice.name) } label: {
+            Button(role: .destructive) { deleting = voice } label: {
                 Label("Delete", systemImage: "trash")
             }
             Button {
@@ -166,6 +183,7 @@ struct VoicesView: View {
         if playing == voice.name {
             player?.stop()
             playing = nil
+            run += 1                      // the pending timer is now stale
             return
         }
         guard let url = voice.recording else { return }
@@ -174,12 +192,16 @@ struct VoicesView: View {
         player = try? AVAudioPlayer(contentsOf: url)
         player?.play()
         playing = voice.name
-        // No delegate for one line of state: the row is a play/stop toggle and
-        // the worst case is a button that says stop for a moment too long.
+
+        // Tagged, because the name alone is not enough: play a voice, stop it,
+        // play the same one again, and the first timer comes due mid-playback
+        // and clears the button while the audio is still going.
+        run += 1
+        let thisRun = run
         let seconds = player?.duration ?? 0
         Task {
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            if playing == voice.name { playing = nil }
+            if run == thisRun { playing = nil }
         }
     }
 }

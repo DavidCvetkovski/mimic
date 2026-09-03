@@ -1,5 +1,8 @@
 import AVFoundation
 import Foundation
+#if os(iOS)
+import UIKit
+#endif
 
 /// Plays audio that is still being made.
 ///
@@ -35,7 +38,61 @@ public final class StreamPlayer: ObservableObject {
     /// started a transport over silence and immediately hit the end again.
     private var rendered: [AVAudioPCMBuffer] = []
 
-    public init() {}
+    /// Kept so they can be taken down again.
+    private var watchers: [NSObjectProtocol] = []
+
+    public init() {
+        listenForInterruptions()
+    }
+
+    deinit {
+        for watcher in watchers { NotificationCenter.default.removeObserver(watcher) }
+    }
+
+    /// Stop claiming to play when the world has stopped the audio.
+    ///
+    /// Position is wall-clock, measured from when playback started, because
+    /// that is honest while buffers are still arriving. It stops being honest
+    /// the moment something else takes the audio away: a call arrives, the
+    /// headphones come out, the app goes to the background — the sound stops
+    /// and the clock does not, so the bar runs to the end of a passage nobody
+    /// heard. Each of these pauses instead.
+    private func listenForInterruptions() {
+        #if os(iOS)
+        let centre = NotificationCenter.default
+
+        watchers.append(centre.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(), queue: .main) { [weak self] note in
+                let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                guard let raw, let type = AVAudioSession.InterruptionType(rawValue: raw),
+                      type == .began else { return }
+                // Deliberately not auto-resuming when it ends: coming back
+                // mid-sentence out of a phone call is worse than a button.
+                MainActor.assumeIsolated { self?.pause() }
+            })
+
+        watchers.append(centre.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(), queue: .main) { [weak self] note in
+                let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+                guard let raw,
+                      AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable
+                else { return }
+                // Headphones out. Carrying on through the speaker is the thing
+                // every phone learned not to do.
+                MainActor.assumeIsolated { self?.pause() }
+            })
+
+        watchers.append(centre.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                // Nothing keeps playing back there — the app declares no
+                // background audio — so the clock must not keep running either.
+                MainActor.assumeIsolated { self?.pause() }
+            })
+        #endif
+    }
 
     /// True once enough is banked that playback will not catch up.
     ///

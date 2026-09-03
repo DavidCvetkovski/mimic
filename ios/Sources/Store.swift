@@ -116,6 +116,24 @@ final class Store: ObservableObject {
         }
     }
 
+    /// What to do after a failure, which is not always "load it again".
+    ///
+    /// A download that dies partway leaves an incomplete model, and loading
+    /// that throws `modelMissing` — so a Try again wired to `load()` failed,
+    /// set `.failed`, and offered Try again. The only way out was deleting the
+    /// app. Which of the two is needed depends on what is on the disk.
+    var recoveryNeedsDownload: Bool {
+        !ModelDownload.isComplete(at: modelDirectory)
+    }
+
+    func retry() async {
+        if recoveryNeedsDownload {
+            await download()
+        } else {
+            await load()
+        }
+    }
+
     func load() async {
         stage = .loading
         let directories = (modelDirectory, voicesDirectory, cacheDirectory)
@@ -140,6 +158,18 @@ final class Store: ObservableObject {
 
     /// The library, with enough about each voice to list it.
     @Published private(set) var library: [VoiceStore.Summary] = []
+
+    /// What the engine is doing instead of being available, if anything.
+    ///
+    /// Writing and registering both put the speech model down to make room —
+    /// half a gigabyte each is what a phone terminates an app for. For those
+    /// few seconds `runtime` is nil while the app still looks entirely ready,
+    /// and `speak()` returned silently: you pressed Speak and nothing at all
+    /// happened. The screen has to say so.
+    @Published private(set) var busy: String?
+
+    /// Whether there is an engine to speak with right now.
+    var canSpeak: Bool { runtime != nil }
 
     func refreshVoices() {
         let store = runtime?.voices ?? VoiceStore(root: voicesDirectory)
@@ -366,6 +396,7 @@ final class Store: ObservableObject {
         // the "Saving…" the sheet is already showing.
         runtime?.cache?.forget(voice: name)   // re-recording replaces the voice
         runtime = nil
+        busy = "Saving the voice"
 
         let directories = (modelDirectory, voicesDirectory)
         do {
@@ -483,6 +514,7 @@ final class Store: ObservableObject {
         let directory = modelDirectory
         let cores = Runtime.recommendedThreads
         runtime = nil
+        busy = "Writing — the voice is back in a moment"
 
         defer { Task { await self.reloadEngine() } }
         return try await Task.detached(priority: .userInitiated) {
@@ -502,6 +534,10 @@ final class Store: ObservableObject {
             try Runtime(modelDirectory: directories.0, voicesDirectory: directories.1,
                         threads: cores, cacheDirectory: directories.2)
         }.value
+        busy = nil
+        if runtime == nil {
+            problem = "The voice model did not come back. Reopen Mimic to load it again."
+        }
     }
 
     func delete(_ name: String) {

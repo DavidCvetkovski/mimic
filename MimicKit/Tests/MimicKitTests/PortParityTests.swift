@@ -39,13 +39,11 @@ final class PortParityTests: XCTestCase {
     var voicesDirectory: URL { home.appending(path: "voices") }
 
     func loadTruth() throws -> Truth {
-        let path = ProcessInfo.processInfo.environment["MIMIC_TRUTH"]
-            ?? "/private/tmp/mimic-truth.json"
-        guard FileManager.default.fileExists(atPath: path) else {
-            throw XCTSkip("no ground-truth file; run the capture script first")
+        let url = Fixtures.url("speech-truth.json")
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw XCTSkip("no speech ground truth; run tools/capture_speech_truth.py")
         }
-        return try JSONDecoder().decode(Truth.self,
-                                        from: Data(contentsOf: URL(filePath: path)))
+        return try JSONDecoder().decode(Truth.self, from: Data(contentsOf: url))
     }
 
     func requireModel() throws {
@@ -149,6 +147,28 @@ final class RegistrationTests: XCTestCase {
         let reloaded = try store.load("Ported")
         XCTAssertEqual(reloaded.codes, profile.codes, "the profile did not survive a round trip")
         XCTAssertEqual(reloaded.referenceText, "a transcript for the test")
+    }
+}
+
+/// Where the ground-truth fixtures live.
+///
+/// In the repository, deliberately. They used to be written to /private/tmp,
+/// which macOS purges — so the four tests that prove the Swift ports reproduce
+/// the Python engine exactly were the four that quietly stopped running, and a
+/// green suite meant less than it looked like. `MIMIC_FIXTURES` overrides the
+/// location for anyone keeping them elsewhere.
+enum Fixtures {
+    static func url(_ name: String) -> URL {
+        if let override = ProcessInfo.processInfo.environment["MIMIC_FIXTURES"] {
+            return URL(filePath: override).appending(path: name)
+        }
+        // #filePath is this file inside the package, so the fixtures sit
+        // beside the test sources rather than in the build products.
+        return URL(filePath: #filePath)
+            .deletingLastPathComponent()      // MimicKitTests
+            .deletingLastPathComponent()      // Tests
+            .appending(path: "Fixtures")
+            .appending(path: name)
     }
 }
 
@@ -535,12 +555,11 @@ final class AuthorTests: XCTestCase {
     }
 
     func loadTruth() throws -> Truth {
-        let path = ProcessInfo.processInfo.environment["MIMIC_WRITER_TRUTH"]
-            ?? "/private/tmp/claude-501/-Users-davidcvetkovski-Developer-Harness/936b661e-6616-44f7-9b6d-3d94893157b3/scratchpad/qwen-truth.json"
-        guard FileManager.default.fileExists(atPath: path) else {
-            throw XCTSkip("no writer ground truth; run qwen_truth.py first")
+        let url = Fixtures.url("writer-truth.json")
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw XCTSkip("no writer ground truth; run tools/capture_writer_truth.py")
         }
-        return try JSONDecoder().decode(Truth.self, from: Data(contentsOf: URL(filePath: path)))
+        return try JSONDecoder().decode(Truth.self, from: Data(contentsOf: url))
     }
 
     func requireWriter() throws {
