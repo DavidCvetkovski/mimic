@@ -16,6 +16,7 @@ struct ContentView: View {
     // the current selection wrote one voice's audio under another's name.
     @State private var current: Spoken?
     @State private var recording = false
+    @State private var exporting = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -24,7 +25,7 @@ struct ContentView: View {
 
             Text("WHAT SHOULD IT SAY")
                 .font(.system(size: 10, weight: .semibold)).tracking(1.8)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Palette.inkMuted)
                 .padding(.bottom, 8)
 
             TextEditor(text: $text)
@@ -32,9 +33,10 @@ struct ContentView: View {
                 .scrollContentBackground(.hidden)
                 .padding(12)
                 .frame(minHeight: 120)
-                .background(Color(nsColor: .textBackgroundColor))
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
+                .background(Palette.card)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Palette.rule))
 
+            suggestions
             voicePicker
             controls
 
@@ -58,11 +60,39 @@ struct ContentView: View {
 
     // MARK: - Pieces
 
+    /// The same passages the phone offers, from the same definition.
+    private var suggestions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("OR TRY ONE OF THESE")
+                .font(.system(size: 10, weight: .semibold)).tracking(1.8)
+                .foregroundStyle(Palette.inkMuted)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Preset.all) { preset in
+                        Button { text = preset.text } label: {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(preset.label).font(.callout)
+                                Text(preset.source)
+                                    .font(.caption2).foregroundStyle(Palette.inkMuted)
+                            }
+                            .padding(.horizontal, 13).padding(.vertical, 6)
+                            .background(Palette.chip, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(speaking)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+        .padding(.top, 18)
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("MIMIC")
                 .font(.system(size: 12, weight: .bold)).tracking(5)
-                .foregroundStyle(.tint)
+                .foregroundStyle(Palette.blood)
             Text("Type something. Hear it in your own voice.")
                 .font(.custom("Iowan Old Style", size: 24, relativeTo: .title))
         }
@@ -73,7 +103,7 @@ struct ContentView: View {
             HStack {
                 Text("IN WHICH VOICE")
                     .font(.system(size: 10, weight: .semibold)).tracking(1.8)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Palette.inkMuted)
                 Spacer()
                 Button("Add a voice…") { recording = true }
                     .buttonStyle(.link).font(.callout)
@@ -81,7 +111,7 @@ struct ContentView: View {
             }
             if engine.voices.isEmpty {
                 Text("No voices yet — add one and it will appear here.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(Palette.inkMuted)
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 7) {
@@ -108,17 +138,24 @@ struct ContentView: View {
                 // Prominent to start, plain to stop: the destructive-looking
                 // action should not be the one wearing the accent colour.
                 .buttonStyle(.borderedProminent)
-                .tint(speaking ? Color.secondary : Color.accentColor)
+                .tint(speaking ? Palette.inkMuted : Palette.blood)
                 .controlSize(.large)
                 .disabled(!speaking && (engine.selected == nil
                                         || !engine.state.isReady || text.trimmed.isEmpty))
 
-                Button("Save .wav…") { save() }
-                    .controlSize(.large)
-                    .disabled(current == nil)
+                Menu("Save…") {
+                    Button("Audio (.m4a)") { export(video: false) }
+                    Button("Video (.mp4)") { export(video: true) }
+                    Divider()
+                    Button("Uncompressed (.wav)") { save() }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .controlSize(.large)
+                .disabled(current == nil || exporting)
 
                 if !status.isEmpty {
-                    Text(status).font(.callout).foregroundStyle(.secondary)
+                    Text(status).font(.callout).foregroundStyle(Palette.inkMuted)
                 }
             }
 
@@ -151,10 +188,10 @@ struct ContentView: View {
                 let total = player.isComplete ? max(player.buffered, 0.1)
                                               : max(player.buffered, estimate, 0.1)
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.quaternary)
-                    Capsule().fill(.tint).opacity(0.28)
+                    Capsule().fill(Palette.rule)
+                    Capsule().fill(Palette.blood).opacity(0.28)
                         .frame(width: geometry.size.width * min(1, player.buffered / total))
-                    Capsule().fill(.tint)
+                    Capsule().fill(Palette.blood)
                         .frame(width: geometry.size.width * min(1, player.position / total))
                 }
             }
@@ -163,7 +200,7 @@ struct ContentView: View {
             Text(clockLabel)
                 .font(.system(.caption, design: .monospaced))
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Palette.inkMuted)
                 .frame(width: 92, alignment: .trailing)
         }
     }
@@ -188,7 +225,7 @@ struct ContentView: View {
             if stale { Text("— not the voice selected above") }
         }
         .font(.caption)
-        .foregroundStyle(stale ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+        .foregroundStyle(stale ? AnyShapeStyle(Palette.blood) : AnyShapeStyle(Palette.inkMuted))
         .padding(.top, 12)
     }
 
@@ -198,7 +235,7 @@ struct ContentView: View {
                 .fill(engine.state.isReady ? Color.green
                       : engine.state.message != nil ? Color.red : Color.orange)
                 .frame(width: 6, height: 6)
-            Text(engineLabel).font(.caption).foregroundStyle(.secondary)
+            Text(engineLabel).font(.caption).foregroundStyle(Palette.inkMuted)
         }
         .padding(.top, 18)
     }
@@ -255,11 +292,11 @@ struct ContentView: View {
                         if let encoded = event.wav, let data = Data(base64Encoded: encoded) {
                             // A cache hit streams nothing, so play the whole thing.
                             current = Spoken(audio: data, voice: voice)
-                            player.append(Spoken.samples(from: data), sampleRate: rate)
+                            player.append(Audio.samples(fromWav: data)?.samples ?? [], sampleRate: rate)
                             player.play()
                             status = "from cache"
                         } else {
-                            current = Spoken(audio: Spoken.wav(chunks.flatMap { $0 }, rate: rate),
+                            current = Spoken(audio: Audio.wav(chunks.flatMap { $0 }, sampleRate: rate),
                                              voice: voice)
                             if !player.isPlaying { player.play() }
                             status = String(format: "%.1fs for %.1fs of audio",
@@ -283,6 +320,43 @@ struct ContentView: View {
         task = nil
         player.stop()
         status = "stopped"
+    }
+
+    /// Save as something a person would actually send.
+    ///
+    /// A .wav is ten times the size and several apps quietly refuse it; a
+    /// video carries the voice into the places that take video and not sound.
+    /// The uncompressed original stays in the menu for anyone who wants it.
+    private func export(video: Bool) {
+        guard let spoken = current else { return }
+        guard let (samples, rate) = Audio.samples(fromWav: spoken.audio) else { return }
+        let name = Export.fileName(for: text, voice: spoken.voice,
+                                   extension: video ? "mp4" : "m4a")
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = name
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.directoryURL = FileManager.default.urls(
+            for: .downloadsDirectory, in: .userDomainMask).first
+
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first else { return }
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            exporting = true
+            Task {
+                defer { exporting = false }
+                do {
+                    if video {
+                        try await Export.video(samples: samples, sampleRate: rate, to: url)
+                    } else {
+                        try Export.m4a(samples: samples, sampleRate: rate, to: url)
+                    }
+                } catch {
+                    self.error = error.localizedDescription
+                }
+            }
+        }
     }
 
     private func save() {
@@ -318,6 +392,7 @@ private struct VoiceChip: View {
     let voice: Voice
     let selected: Bool
     @State private var renaming = false
+    @State private var confirmingDelete = false
     @State private var draft = ""
     // Held, or the player is deallocated the moment this function returns and
     // the sound stops before it has properly started.
@@ -340,8 +415,8 @@ private struct VoiceChip: View {
             Text(voice.name)
                 .font(.callout)
                 .padding(.horizontal, 14).padding(.vertical, 7)
-                .background(selected ? AnyShapeStyle(.tint)
-                                     : AnyShapeStyle(.quaternary),
+                .background(selected ? AnyShapeStyle(Palette.blood)
+                                     : AnyShapeStyle(Palette.chip),
                             in: Capsule())
                 .foregroundStyle(selected ? AnyShapeStyle(.white)
                                           : AnyShapeStyle(.primary))
@@ -351,9 +426,18 @@ private struct VoiceChip: View {
             Button("Play the recording") { Task { await playSample() } }
             Button("Rename…") { draft = voice.name; renaming = true }
             Divider()
+            Button("Delete…", role: .destructive) { confirmingDelete = true }
+        }
+        // A voice costs a recording and a registration and cannot be got back,
+        // which is more than one menu click should be able to spend.
+        .confirmationDialog("Delete “\(voice.name)”?", isPresented: $confirmingDelete) {
             Button("Delete", role: .destructive) {
                 Task { try? await engine.delete(voice.name) }
             }
+            Button("Keep it", role: .cancel) {}
+        } message: {
+            Text("The recording and the profile go with it. Recording another "
+                 + "takes about fifteen seconds.")
         }
         .alert("Rename voice", isPresented: $renaming) {
             TextField("Name", text: $draft)
@@ -371,37 +455,6 @@ private struct VoiceChip: View {
 struct Spoken: Equatable {
     let audio: Data
     let voice: String
-
-    /// Float samples out of a 16-bit mono WAV.
-    static func samples(from wav: Data) -> [Float] {
-        guard wav.count > 44 else { return [] }
-        return wav.dropFirst(44).withUnsafeBytes { raw in
-            (0..<(raw.count / 2)).map {
-                Float(raw.loadUnaligned(fromByteOffset: $0 * 2, as: Int16.self)) / 32_768
-            }
-        }
-    }
-
-    /// And back again, for saving what was streamed.
-    static func wav(_ samples: [Float], rate: Int) -> Data {
-        var data = Data()
-        func put<T: FixedWidthInteger>(_ value: T) {
-            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
-        }
-        let bytes = samples.count * 2
-        data.append(contentsOf: Array("RIFF".utf8)); put(UInt32(36 + bytes))
-        data.append(contentsOf: Array("WAVE".utf8))
-        data.append(contentsOf: Array("fmt ".utf8)); put(UInt32(16))
-        put(UInt16(1)); put(UInt16(1))
-        put(UInt32(rate)); put(UInt32(rate * 2))
-        put(UInt16(2)); put(UInt16(16))
-        data.append(contentsOf: Array("data".utf8)); put(UInt32(bytes))
-        for sample in samples {
-            let clamped = max(-1, min(1, sample))
-            put(Int16(clamped * (clamped < 0 ? 32_768 : 32_767)))
-        }
-        return data
-    }
 
     /// A filename out of a voice name, which may contain anything.
     var filename: String {

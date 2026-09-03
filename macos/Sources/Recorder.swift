@@ -24,10 +24,24 @@ final class Recorder: ObservableObject {
     /// Fifteen seconds is the sweet spot; the UI colours the clock inside it.
     static let idealRange: ClosedRange<Double> = 10...25
 
+    /// What the engine will actually accept, and therefore what the microphone
+    /// is allowed to collect.
+    ///
+    /// The registration code refuses a reference outside 0.5–30s. Nothing
+    /// stopped the recording at thirty, so it was possible to read for two
+    /// minutes and be told afterwards that it was no good.
+    static let longest: Double = 29
+    /// Below this there is not enough of a voice to learn anything from.
+    static let shortest: Double = 3
+
+    /// Set when the recording stopped because it reached the limit.
+    @Published private(set) var reachedLimit = false
+
     func start() throws {
         guard !isRecording else { return }
         samples.removeAll()
         recorded = nil
+        reachedLimit = false
 
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -54,6 +68,10 @@ final class Recorder: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self, self.isRecording else { return }
                 self.seconds = Date().timeIntervalSince(self.started)
+                if self.seconds >= Recorder.longest {
+                    self.reachedLimit = true
+                    self.stop()
+                }
             }
         }
     }
@@ -66,37 +84,15 @@ final class Recorder: ObservableObject {
         ticker = nil
         isRecording = false
         level = 0
-        recorded = Recorder.wav(samples, sampleRate: Int(sampleRate))
+        recorded = Audio.wav(samples, sampleRate: Int(sampleRate))
     }
 
     func discard() {
         recorded = nil
+        reachedLimit = false
         seconds = 0
     }
 
-    /// float samples to a 16-bit mono WAV, header and all.
-    static func wav(_ samples: [Float], sampleRate: Int) -> Data {
-        var data = Data()
-        func append<T: FixedWidthInteger>(_ value: T) {
-            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
-        }
-        let bytes = samples.count * 2
-        data.append(contentsOf: Array("RIFF".utf8));  append(UInt32(36 + bytes))
-        data.append(contentsOf: Array("WAVE".utf8))
-        data.append(contentsOf: Array("fmt ".utf8));  append(UInt32(16))
-        append(UInt16(1))                    // PCM
-        append(UInt16(1))                    // mono
-        append(UInt32(sampleRate))
-        append(UInt32(sampleRate * 2))       // byte rate
-        append(UInt16(2))                    // block align
-        append(UInt16(16))                   // bits
-        data.append(contentsOf: Array("data".utf8)); append(UInt32(bytes))
-        for sample in samples {
-            let clamped = max(-1, min(1, sample))
-            append(Int16(clamped * (clamped < 0 ? 32_768 : 32_767)))
-        }
-        return data
-    }
 
     /// Ask for the microphone, and report whether we may use it.
     static func requestAccess() async -> Bool {

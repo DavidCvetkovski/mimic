@@ -30,22 +30,22 @@ struct RecordView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("ADD A VOICE")
                 .font(.system(size: 10, weight: .semibold)).tracking(1.8)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Palette.inkMuted)
 
             Text(RecordView.script)
                 .font(.custom("Iowan Old Style", size: 16, relativeTo: .body))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: .textBackgroundColor))
-                .overlay(Rectangle().frame(width: 2).foregroundStyle(.tint),
+                .background(Palette.card)
+                .overlay(Rectangle().frame(width: 2).foregroundStyle(Palette.blood),
                          alignment: .leading)
 
             recordRow
 
-            Text("About fifteen seconds is ideal. Read it as written — longer or "
-                 + "noisier makes the clone worse rather than better.")
-                .font(.caption).foregroundStyle(.secondary)
+            Text(guidance)
+                .font(.callout)
+                .foregroundStyle(recorder.reachedLimit ? Palette.blood : Palette.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
 
             if recorder.recorded != nil {
@@ -57,7 +57,7 @@ struct RecordView: View {
                     DisclosureGroup("What you actually said") {
                         TextEditor(text: $transcript)
                             .font(.callout).frame(height: 70)
-                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Palette.rule))
                     }
                     .font(.caption)
                 }
@@ -84,7 +84,7 @@ struct RecordView: View {
                 if saving { ProgressView().controlSize(.small) }
                 Button(saving ? "Registering…" : "Save voice") { Task { await save() } }
                     .buttonStyle(.borderedProminent)
-                    .disabled(recorder.recorded == nil || name.trimmed.isEmpty || saving)
+                    .disabled(!canSave)
             }
         }
         .padding(24)
@@ -103,8 +103,8 @@ struct RecordView: View {
             // actually hearing you before you have something to play back.
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.quaternary)
-                    Capsule().fill(.tint)
+                    Capsule().fill(Palette.rule)
+                    Capsule().fill(Palette.blood)
                         .frame(width: geometry.size.width * recorder.level)
                         .animation(.linear(duration: 0.06), value: recorder.level)
                 }
@@ -115,7 +115,7 @@ struct RecordView: View {
                 .font(.system(.callout, design: .monospaced))
                 .monospacedDigit()
                 .foregroundStyle(Recorder.idealRange.contains(recorder.seconds)
-                                 ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                                 ? AnyShapeStyle(Palette.blood) : AnyShapeStyle(Palette.inkMuted))
                 .frame(width: 52, alignment: .trailing)
         }
     }
@@ -142,6 +142,27 @@ struct RecordView: View {
         guard let data = recorder.recorded else { return }
         player = try? AVAudioPlayer(data: data)
         player?.play()
+    }
+
+    /// Everything that has to be true before there is a voice to save.
+    private var canSave: Bool {
+        recorder.recorded != nil && !recorder.isRecording && !saving
+            && recorder.seconds >= Recorder.shortest
+            && !name.trimmed.isEmpty
+    }
+
+    /// One line that changes with the situation rather than one that does not.
+    private var guidance: String {
+        if recorder.reachedLimit {
+            return "That is as much as it can use — thirty seconds is the limit. "
+                 + "Save it, or record again."
+        }
+        if recorder.recorded != nil, recorder.seconds < Recorder.shortest {
+            return "Too short to learn a voice from. Read the paragraph through — "
+                 + "about fifteen seconds."
+        }
+        return "About fifteen seconds is ideal. Read it as written — longer or "
+             + "noisier makes the clone worse, not better."
     }
 
     private func save() async {
