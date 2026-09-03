@@ -220,6 +220,40 @@ final class ChunkingTests: XCTestCase {
         XCTAssertTrue(Runtime.split("   ").isEmpty)
     }
 
+    /// The model reads a whole chunk to decide its prosody, so where the cut
+    /// falls is audible. It used to fall at any space.
+    func testALongSentenceBreaksWhereSomebodyWouldBreathe() {
+        let hamlet = "To be, or not to be, that is the question. Whether it is "
+            + "nobler in the mind to suffer the slings and arrows of outrageous "
+            + "fortune, or to take arms against a sea of troubles, and by "
+            + "opposing, end them."
+        let parts = Runtime.split(hamlet, limit: 110)
+        for part in parts {
+            let last = part.trimmingCharacters(in: .whitespaces).last
+            XCTAssertTrue(",;:.!?".contains(last ?? " "),
+                          "chunk ends mid-clause: …\(part.suffix(30))")
+        }
+        // The specific seam that gave it away: "take arms" must not be parted
+        // from "against a sea of troubles".
+        XCTAssertFalse(parts.contains { $0.hasSuffix("or to take arms") })
+    }
+
+    /// A break may pass the limit slightly to reach a comma, but only slightly.
+    func testItWillOvershootALittleToReachAComma() {
+        let text = String(repeating: "word ", count: 23) + "and then a pause, "
+                 + String(repeating: "more ", count: 20) + "end."
+        let parts = Runtime.split(text, limit: 110)
+        XCTAssertTrue(parts[0].hasSuffix(","), "did not reach the comma: \(parts[0])")
+        XCTAssertLessThanOrEqual(parts[0].count, 175, "overshot far past the limit")
+    }
+
+    /// With nothing to breathe at, it does what it always did.
+    func testNoClauseMarksFallsBackToAWordBoundary() {
+        let parts = Runtime.split(String(repeating: "word ", count: 80), limit: 100)
+        for part in parts { XCTAssertLessThanOrEqual(part.count, 100) }
+        XCTAssertFalse(parts.contains { $0.hasSuffix("wor") }, "cut inside a word")
+    }
+
     /// The one that got out. A short sentence followed by one over the limit:
     /// the long one is broken into fragments, and those were emitted while the
     /// short sentence was still waiting in the packing buffer for company — so

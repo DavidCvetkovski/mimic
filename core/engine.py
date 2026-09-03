@@ -46,7 +46,7 @@ CACHE_LIMIT_MB = 200
 # shipped in a state where a passage mixing short and long sentences came out
 # in the wrong order, and the cache kept the result — so fixing the splitter
 # was not enough on its own.
-CACHE_VERSION = "2"
+CACHE_VERSION = "3"
 
 # The reference implementation wants every model file in one flat directory;
 # a Hugging Face snapshot puts the voice-registration encoder in a subfolder.
@@ -331,6 +331,41 @@ class Engine:
         return data, len(audio) / SAMPLE_RATE, False
 
 
+def _clause_break(sentence: str, limit: int, overshoot: int = 60) -> int:
+    """
+    Where to cut a sentence too long to say in one go.
+
+    Anywhere is not the answer. The model reads the whole chunk to decide its
+    prosody, so a cut in the middle of a clause restarts the intonation
+    mid-phrase and the join is audible: "...or to take arms" and "against a sea
+    of troubles" arrive as two half-read fragments rather than one sentence.
+    Any space is what it used to pick.
+
+    So it breaks where a speaker breathes. The last clause mark before the
+    limit is best; failing that the first one just after it, because
+    overshooting a little is cheaper than a seam in the middle of a phrase. A
+    break very near the start is refused — it would leave a three-word fragment
+    and the rest still oversized.
+    """
+    # Just after a clause mark that is actually followed by a space, so a
+    # decimal point or a comma inside a number is not a place to breathe.
+    breaks = [i + 1 for i, char in enumerate(sentence[:-1])
+              if char in ",;:\u2014\u2013" and sentence[i + 1] == " "]
+
+    earliest = max(24, limit // 3)
+    before = [b for b in breaks if earliest <= b <= limit]
+    if before:
+        return before[-1]
+    after = [b for b in breaks if limit < b <= limit + overshoot]
+    if after:
+        return after[0]
+
+    # Nothing to breathe at: a word boundary inside the limit, and a hard cut
+    # only if there is not even one of those.
+    cut = sentence.rfind(" ", 0, limit)
+    return cut if cut > 0 else limit
+
+
 def split_sentences(text: str, limit: int = 110) -> list[str]:
     """
     Break a passage where a speaker would pause.
@@ -352,9 +387,7 @@ def split_sentences(text: str, limit: int = 110) -> list[str]:
             if current:
                 parts.append(current)
                 current = ""
-            cut = piece.rfind(" ", 0, limit)
-            if cut <= 0:
-                cut = limit
+            cut = _clause_break(piece, limit)
             parts.append(piece[:cut].strip())
             piece = piece[cut:].strip()
         if current and len(current) + len(piece) + 1 > limit:

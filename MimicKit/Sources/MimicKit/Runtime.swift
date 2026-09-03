@@ -310,6 +310,49 @@ public final class Runtime {
         return max(0.3, 0.0647 * Double(length) + 0.089)
     }
 
+    /// Where to cut a sentence too long to say in one go.
+    ///
+    /// Anywhere is not the answer. The model reads the whole chunk to decide
+    /// its prosody, so a cut in the middle of a clause restarts the intonation
+    /// mid-phrase and the join is audible: "…or to take arms" and "against a
+    /// sea of troubles" arrive as two half-read fragments rather than one
+    /// sentence. Any space was exactly what it used to pick.
+    ///
+    /// So it breaks where a speaker breathes. The last clause mark before the
+    /// limit is best; failing that the first one just after it, because
+    /// overshooting a little is cheaper than a seam in the middle of a phrase.
+    /// A break very near the start is refused — it would leave a three-word
+    /// fragment and the rest still oversized. Only a long run with no clause
+    /// mark at all falls back to a space, which is where this began.
+    static func clauseBreak(in sentence: String, preferring limit: Int,
+                            overshoot: Int = 60) -> String.Index {
+        let characters = Array(sentence)
+        let marks: Set<Character> = [",", ";", ":", "\u{2014}", "\u{2013}"]
+
+        // Just after a clause mark that is actually followed by a space, so a
+        // decimal point or a comma inside a number is not a place to breathe.
+        var breaks: [Int] = []
+        for index in characters.indices.dropLast()
+        where marks.contains(characters[index]) && characters[index + 1] == " " {
+            breaks.append(index + 1)
+        }
+
+        let earliest = max(24, limit / 3)
+        if let before = breaks.last(where: { $0 <= limit && $0 >= earliest }) {
+            return sentence.index(sentence.startIndex, offsetBy: before)
+        }
+        if let after = breaks.first(where: { $0 > limit && $0 <= limit + overshoot }) {
+            return sentence.index(sentence.startIndex, offsetBy: after)
+        }
+        // Nothing to breathe at: the old behaviour, a word boundary inside the
+        // limit, and a hard cut only if there is not even one of those.
+        if let space = characters[..<min(limit, characters.count)].lastIndex(of: " ") {
+            return sentence.index(sentence.startIndex, offsetBy: space)
+        }
+        return sentence.index(sentence.startIndex,
+                              offsetBy: min(limit, characters.count))
+    }
+
     /// Break a passage where a speaker would pause.
     ///
     /// Short enough that the first piece is ready quickly, long enough that the
@@ -345,8 +388,7 @@ public final class Runtime {
                     parts.append(packed)
                     packed = ""
                 }
-                let cut = sentence.prefix(limit).lastIndex(of: " ")
-                    ?? sentence.index(sentence.startIndex, offsetBy: limit)
+                let cut = Runtime.clauseBreak(in: sentence, preferring: limit)
                 parts.append(String(sentence[..<cut]).trimmingCharacters(in: .whitespaces))
                 sentence = String(sentence[cut...]).trimmingCharacters(in: .whitespaces)
             }

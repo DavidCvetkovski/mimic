@@ -26,7 +26,7 @@ public final class AudioCache: @unchecked Sendable {
     /// the result — so fixing the splitter was not enough, because the wrong
     /// audio would still be handed back. A cache able to serve the output of a
     /// fixed bug is worse than no cache at all.
-    public static let version = "2"
+    public static let version = "3"
 
     /// - Parameter limitMB: how much disk to spend before the least recently
     ///   used entries are dropped. 200 MB is a little over fifteen minutes of
