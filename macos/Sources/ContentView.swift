@@ -4,12 +4,13 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject private var engine: Engine
-    @State private var text = "Every word of this was spoken by a model running on my own laptop, in a voice it learned from fifteen seconds of me reading a paragraph aloud."
+    @AppStorage("MimicDraft") private var text = "Every word of this was spoken by a model running on my own laptop, in a voice it learned from fifteen seconds of me reading a paragraph aloud."
     @StateObject private var player = StreamPlayer()
     @State private var task: Task<Void, Never>?
     @State private var estimate: Double = 0
     @State private var status = ""
-    @State private var sentence = ""
+    @State private var generation = UUID()
+    @State private var autoPlay = true
     @State private var error: String?
     // The audio in the player and what produced it. Kept together because the
     // selection can change after something is spoken, and naming the file from
@@ -17,24 +18,34 @@ struct ContentView: View {
     @State private var current: Spoken?
     @State private var recording = false
     @State private var exporting = false
+    @State private var library = false
+    @State private var settings = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().padding(.vertical, 20)
 
-            Text("WHAT SHOULD IT SAY")
-                .font(.system(size: 10, weight: .semibold)).tracking(1.8)
-                .foregroundStyle(Palette.inkMuted)
-                .padding(.bottom, 8)
+            HStack {
+                Text("WHAT SHOULD IT SAY")
+                    .font(.system(size: 10, weight: .semibold)).tracking(1.8)
+                Spacer()
+                Text("\(text.count.formatted()) / 10,000")
+                    .font(.caption).monospacedDigit()
+                    .foregroundStyle(text.count > 10_000 ? Palette.blood : Palette.inkMuted)
+            }
+            .foregroundStyle(Palette.inkMuted)
+            .padding(.bottom, 8)
 
             TextEditor(text: $text)
                 .font(.custom("Iowan Old Style", size: 17, relativeTo: .body))
                 .scrollContentBackground(.hidden)
                 .padding(12)
-                .frame(minHeight: 120)
+                .frame(minHeight: 130, idealHeight: 170)
+                .accessibilityLabel("Text to speak")
                 .background(Palette.card)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Palette.rule))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule))
 
             suggestions
             voicePicker
@@ -52,10 +63,24 @@ struct ContentView: View {
             engineStatus
         }
         .padding(26)
-        .frame(minWidth: 560, minHeight: 540)
+        .frame(minWidth: 620, idealWidth: 720, minHeight: 630)
+        .background(Palette.background)
+        .foregroundStyle(Palette.ink)
         .sheet(isPresented: $recording) {
             RecordView().environmentObject(engine)
         }
+        .sheet(isPresented: $library) { VoicesView().environmentObject(engine) }
+        .sheet(isPresented: $settings) { SettingsView().environmentObject(engine) }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, engine.state.isReady { Task { await engine.refreshVoices() } }
+        }
+        .onChange(of: recording) { _, showing in
+            if showing { autoPlay = false; player.pause() }
+        }
+        .onChange(of: library) { _, showing in
+            if showing { autoPlay = false; player.pause() }
+        }
+        .onDisappear { stop() }
     }
 
     // MARK: - Pieces
@@ -89,12 +114,21 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("MIMIC")
-                .font(.system(size: 12, weight: .bold)).tracking(5)
-                .foregroundStyle(Palette.blood)
-            Text("Type something. Hear it in your own voice.")
-                .font(.custom("Iowan Old Style", size: 24, relativeTo: .title))
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("MIMIC")
+                    .font(.system(size: 12, weight: .bold)).tracking(5)
+                    .foregroundStyle(Palette.blood)
+                Text("Your words. Your voice.")
+                    .font(.custom("Iowan Old Style", size: 28, relativeTo: .title))
+                Text("Made on this Mac. Ready to share.")
+                    .font(.callout).foregroundStyle(Palette.inkMuted)
+            }
+            Spacer()
+            Button { library = true } label: { Label("Voices", systemImage: "person.wave.2") }
+                .disabled(!engine.state.isReady || speaking)
+            Button { settings = true } label: { Image(systemName: "gearshape") }
+                .help("Settings and storage").accessibilityLabel("Settings and storage")
         }
     }
 
@@ -107,17 +141,36 @@ struct ContentView: View {
                 Spacer()
                 Button("Add a voice…") { recording = true }
                     .buttonStyle(.link).font(.callout)
-                    .disabled(!engine.state.isReady)
+                    .disabled(!engine.state.isReady || speaking)
             }
             if engine.voices.isEmpty {
-                Text("No voices yet — add one and it will appear here.")
-                    .font(.callout).foregroundStyle(Palette.inkMuted)
+                HStack(spacing: 12) {
+                    Image(systemName: "waveform").font(.title2).foregroundStyle(Palette.blood)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Start with your voice").font(.callout.weight(.semibold))
+                        Text("Read a short paragraph aloud. About fifteen seconds is ideal.")
+                            .font(.caption).foregroundStyle(Palette.inkMuted)
+                    }
+                }
+                .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Palette.card, in: RoundedRectangle(cornerRadius: 8))
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 7) {
                         ForEach(engine.voices) { voice in
-                            VoiceChip(voice: voice,
-                                      selected: engine.selected == voice.name)
+                            Button { engine.selected = voice.name } label: {
+                                HStack(spacing: 5) {
+                                    if engine.selected == voice.name { Image(systemName: "checkmark") }
+                                    Text(voice.name)
+                                }
+                                .font(.callout)
+                                .padding(.horizontal, 14).padding(.vertical, 7)
+                                .background(engine.selected == voice.name ? Palette.blood : Palette.chip,
+                                            in: Capsule())
+                                .foregroundStyle(engine.selected == voice.name ? .white : Palette.ink)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(engine.selected == voice.name ? .isSelected : [])
                         }
                     }
                 }
@@ -141,7 +194,8 @@ struct ContentView: View {
                 .tint(speaking ? Palette.inkMuted : Palette.blood)
                 .controlSize(.large)
                 .disabled(!speaking && (engine.selected == nil
-                                        || !engine.state.isReady || text.trimmed.isEmpty))
+                                        || !engine.state.isReady || text.trimmed.isEmpty
+                                        || text.count > 10_000 || engine.activity != nil))
 
                 Menu("Save…") {
                     Button("Audio (.m4a)") { export(video: false) }
@@ -152,11 +206,13 @@ struct ContentView: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .controlSize(.large)
-                .disabled(current == nil || exporting)
+                .disabled(current == nil || exporting || speaking)
 
-                if !status.isEmpty {
-                    Text(status).font(.callout).foregroundStyle(Palette.inkMuted)
-                }
+                if speaking || exporting { ProgressView().controlSize(.small) }
+                Text(exporting ? "Saving…" : status)
+                    .font(.callout).foregroundStyle(Palette.inkMuted)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
             }
 
             if speaking || player.buffered > 0 {
@@ -171,7 +227,13 @@ struct ContentView: View {
     private var transport: some View {
         HStack(spacing: 12) {
             Button {
-                player.isPlaying ? player.pause() : player.play()
+                if player.isPlaying {
+                    autoPlay = false
+                    player.pause()
+                } else {
+                    autoPlay = true
+                    player.play()
+                }
             } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 11, weight: .bold))
@@ -181,6 +243,7 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .disabled(player.buffered == 0)
+            .accessibilityLabel(player.isPlaying ? "Pause audio" : "Play audio")
 
             GeometryReader { geometry in
                 // Once everything is made the track is the audio, not the
@@ -218,11 +281,11 @@ struct ContentView: View {
     /// Whose voice is in the player. Without it the only clue is the sound,
     /// which is no help when comparing two takes of the same line.
     private func nowPlaying(_ spoken: Spoken) -> some View {
-        let stale = spoken.voice != engine.selected
+        let stale = spoken.voice != engine.selected || spoken.text != text.trimmed
         return HStack(spacing: 6) {
             Image(systemName: "speaker.wave.2")
             Text(spoken.voice).fontWeight(.semibold)
-            if stale { Text("— not the voice selected above") }
+            Text(stale ? "· Previous take — speak again to hear your changes" : "· Ready to save")
         }
         .font(.caption)
         .foregroundStyle(stale ? AnyShapeStyle(Palette.blood) : AnyShapeStyle(Palette.inkMuted))
@@ -235,7 +298,13 @@ struct ContentView: View {
                 .fill(engine.state.isReady ? Color.green
                       : engine.state.message != nil ? Color.red : Color.orange)
                 .frame(width: 6, height: 6)
-            Text(engineLabel).font(.caption).foregroundStyle(Palette.inkMuted)
+            Text(engine.libraryError ?? engineLabel)
+                .font(.caption).foregroundStyle(Palette.inkMuted).textSelection(.enabled)
+            Spacer()
+            if engine.state.message != nil || engine.libraryError != nil {
+                Button("Reconnect") { Task { await engine.connect() } }
+                    .font(.caption)
+            }
         }
         .padding(.top, 18)
     }
@@ -244,7 +313,7 @@ struct ContentView: View {
         switch engine.state {
         case .idle:            return "engine not started"
         case .starting:        return "starting the engine…"
-        case .ready:           return "engine ready · \(engine.voices.count) voice"
+        case .ready:           return "Local engine ready · \(engine.voices.count) voice"
                                     + (engine.voices.count == 1 ? "" : "s")
         case .failed(let why): return why
         }
@@ -253,73 +322,94 @@ struct ContentView: View {
     // MARK: - Actions
 
     private func start() {
-        guard let voice = engine.selected else { return }
+        guard let voice = engine.selected, !speaking else { return }
+        let words = text.trimmed
+        guard !words.isEmpty, words.count <= 10_000 else { return }
+        let run = UUID()
+        generation = run
         error = nil
-        status = ""
+        status = "Preparing your voice…"
+        current = nil
         player.reset()
         estimate = 0
-
+        autoPlay = true
+        engine.activity = "Speaking"
         var worstRtf = 1.2
-        var chunks: [[Float]] = []
         var rate = 44_100
-
+        var nextIndex = 0
         task = Task {
-            defer { task = nil }
+            defer {
+                if generation == run { task = nil; engine.activity = nil }
+            }
             do {
-                try await engine.speakStream(text.trimmed, voice: voice) { event in
+                try await engine.speakStream(words, voice: voice) { event in
+                    guard generation == run else { throw CancellationError() }
                     switch event.type {
                     case "start":
-                        estimate = event.estimate ?? 0
-                        rate = event.sampleRate ?? 44_100
-                        status = "about \(Int(estimate))s of audio"
-
+                        let offeredRate = event.sampleRate ?? 44_100
+                        guard (8_000...192_000).contains(offeredRate) else {
+                            throw EngineError.server("The engine sent an unsupported sample rate.")
+                        }
+                        rate = offeredRate
+                        estimate = max(0, event.estimate ?? 0)
+                        status = "Making about \(Int(estimate.rounded())) seconds of audio…"
                     case "chunk":
-                        let samples = event.samples
-                        chunks.append(samples)
-                        player.append(samples, sampleRate: rate)
+                        guard event.index == nextIndex else {
+                            throw EngineError.server("Part of the audio is missing. Try speaking again.")
+                        }
+                        nextIndex += 1
+                        player.append(try event.decodedSamples(), sampleRate: rate)
                         worstRtf = max(worstRtf, event.rtf ?? 1.2)
-                        sentence = "sentence \((event.index ?? 0) + 1) of \(event.of ?? 1)"
-                        status = sentence
-                        if !player.isPlaying,
+                        status = "Sentence \(nextIndex) of \(event.of ?? nextIndex)"
+                        if autoPlay, !player.isPlaying,
                            StreamPlayer.shouldStart(buffered: player.buffered,
                                                     estimate: max(estimate, player.buffered),
                                                     realtimeFactor: worstRtf) {
                             player.play()
                         }
-
                     case "done":
-                        player.isComplete = true
-                        if let encoded = event.wav, let data = Data(base64Encoded: encoded) {
-                            // A cache hit streams nothing, so play the whole thing.
-                            current = Spoken(audio: data, voice: voice)
-                            player.append(Audio.samples(fromWav: data)?.samples ?? [], sampleRate: rate)
-                            player.play()
-                            status = "from cache"
+                        let audio: Data
+                        if let encoded = event.wav {
+                            guard let data = Data(base64Encoded: encoded),
+                                  let decoded = Audio.samples(fromWav: data), !decoded.samples.isEmpty else {
+                                throw EngineError.server("The saved audio could not be read. Try speaking again.")
+                            }
+                            player.reset()
+                            player.append(decoded.samples, sampleRate: decoded.sampleRate)
+                            audio = data
+                            status = "Played from cache"
                         } else {
-                            current = Spoken(audio: Audio.wav(chunks.flatMap { $0 }, sampleRate: rate),
-                                             voice: voice)
-                            if !player.isPlaying { player.play() }
-                            status = String(format: "%.1fs for %.1fs of audio",
-                                            event.elapsed ?? 0, event.seconds ?? 0)
+                            guard player.buffered > 0 else {
+                                throw EngineError.server("No audio was produced. Try a different passage.")
+                            }
+                            audio = Audio.wav(player.samples, sampleRate: rate)
+                            status = String(format: "Ready · %.1fs of audio", player.buffered)
                         }
-
-                    default:
-                        break
+                        player.isComplete = true
+                        current = Spoken(audio: audio, voice: voice, text: words)
+                        if autoPlay, !player.isPlaying { player.play() }
+                    default: break
                     }
                 }
-            } catch is CancellationError {
-                status = "stopped"
             } catch {
+                guard generation == run else { return }
+                player.reset()
+                current = nil
+                status = Task.isCancelled ? "Stopped" : ""
                 if !Task.isCancelled { self.error = error.localizedDescription }
             }
         }
     }
 
     private func stop() {
+        generation = UUID()
         task?.cancel()
         task = nil
-        player.stop()
-        status = "stopped"
+        engine.activity = nil
+        autoPlay = false
+        player.reset()
+        current = nil
+        status = "Stopped"
     }
 
     /// Save as something a person would actually send.
@@ -330,11 +420,12 @@ struct ContentView: View {
     private func export(video: Bool) {
         guard let spoken = current else { return }
         guard let (samples, rate) = Audio.samples(fromWav: spoken.audio) else { return }
-        let name = Export.fileName(for: text, voice: spoken.voice,
+        let name = Export.fileName(for: spoken.text, voice: spoken.voice,
                                    extension: video ? "mp4" : "m4a")
 
         let panel = NSSavePanel()
         panel.nameFieldStringValue = name
+        panel.allowedContentTypes = video ? [.mpeg4Movie] : [.mpeg4Audio]
         panel.canCreateDirectories = true
         panel.isExtensionHidden = false
         panel.directoryURL = FileManager.default.urls(
@@ -350,8 +441,11 @@ struct ContentView: View {
                     if video {
                         try await Export.video(samples: samples, sampleRate: rate, to: url)
                     } else {
-                        try Export.m4a(samples: samples, sampleRate: rate, to: url)
+                        try await Task.detached(priority: .userInitiated) {
+                            try Export.m4a(samples: samples, sampleRate: rate, to: url)
+                        }.value
                     }
+                    status = "Saved \(url.lastPathComponent)"
                 } catch {
                     self.error = error.localizedDescription
                 }
@@ -378,7 +472,8 @@ struct ContentView: View {
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
             do {
-                try spoken.audio.write(to: url)
+                try spoken.audio.write(to: url, options: .atomic)
+                status = "Saved \(url.lastPathComponent)"
             } catch {
                 self.error = "Could not save: \(error.localizedDescription)"
             }
@@ -386,86 +481,12 @@ struct ContentView: View {
     }
 }
 
-/// One voice in the picker: click to use, right-click to rename or delete.
-private struct VoiceChip: View {
-    @EnvironmentObject private var engine: Engine
-    let voice: Voice
-    let selected: Bool
-    @State private var renaming = false
-    @State private var confirmingDelete = false
-    @State private var draft = ""
-    // Held, or the player is deallocated the moment this function returns and
-    // the sound stops before it has properly started.
-    @State private var samplePlayer: AVAudioPlayer?
-
-    /// Fetch the reference and play it. NSSound(contentsOf:) does not read an
-    /// http URL — the recording lives behind the engine's API, not on disk
-    /// anywhere this app can reach.
-    private func playSample() async {
-        guard let (data, _) = try? await URLSession.shared
-            .data(from: engine.sampleURL(voice.name)) else { return }
-        samplePlayer = try? AVAudioPlayer(data: data)
-        samplePlayer?.play()
-    }
-
-    var body: some View {
-        Button {
-            engine.selected = voice.name
-        } label: {
-            Text(voice.name)
-                .font(.callout)
-                .padding(.horizontal, 14).padding(.vertical, 7)
-                .background(selected ? AnyShapeStyle(Palette.blood)
-                                     : AnyShapeStyle(Palette.chip),
-                            in: Capsule())
-                .foregroundStyle(selected ? AnyShapeStyle(.white)
-                                          : AnyShapeStyle(.primary))
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button("Play the recording") { Task { await playSample() } }
-            Button("Rename…") { draft = voice.name; renaming = true }
-            Divider()
-            Button("Delete…", role: .destructive) { confirmingDelete = true }
-        }
-        // A voice costs a recording and a registration and cannot be got back,
-        // which is more than one menu click should be able to spend.
-        .confirmationDialog("Delete “\(voice.name)”?", isPresented: $confirmingDelete) {
-            Button("Delete", role: .destructive) {
-                Task { try? await engine.delete(voice.name) }
-            }
-            Button("Keep it", role: .cancel) {}
-        } message: {
-            Text("The recording and the profile go with it. Recording another "
-                 + "takes about fifteen seconds.")
-        }
-        .alert("Rename voice", isPresented: $renaming) {
-            TextField("Name", text: $draft)
-            Button("Cancel", role: .cancel) {}
-            Button("Rename") {
-                let name = draft.trimmed
-                guard !name.isEmpty, name != voice.name else { return }
-                Task { try? await engine.rename(voice.name, to: name) }
-            }
-        }
-    }
-}
-
-/// One piece of synthesised audio, and the voice that produced it.
+/// The export always describes the exact text and voice that produced it.
 struct Spoken: Equatable {
     let audio: Data
     let voice: String
-
-    /// A filename out of a voice name, which may contain anything.
-    var filename: String {
-        let allowed = voice.lowercased().map { character -> Character in
-            character.isLetter || character.isNumber ? character : "-"
-        }
-        let slug = String(allowed)
-            .split(separator: "-", omittingEmptySubsequences: true)
-            .joined(separator: "-")
-        return (slug.isEmpty ? "mimic" : slug) + ".wav"
-    }
+    let text: String
+    var filename: String { Export.fileName(for: text, voice: voice, extension: "wav") }
 }
 
 extension String {

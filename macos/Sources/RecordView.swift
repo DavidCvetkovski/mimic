@@ -15,12 +15,14 @@ struct RecordView: View {
     @State private var name = ""
     @State private var transcript = RecordView.script
     @State private var saving = false
+    @State private var requesting = false
+    @State private var active = true
     @State private var error: String?
     @State private var denied = false
     @State private var player: AVAudioPlayer?
 
     static let script = """
-        My name is — and this is my voice. I am reading a short paragraph so it \
+        This is my voice. I am reading a short paragraph so it \
         can learn how I sound. The quick brown fox jumps over the lazy dog. \
         Bright orange leaves fell through the cold November air, and somewhere \
         further down the valley a church bell rang twice.
@@ -54,12 +56,18 @@ struct RecordView: View {
                         .buttonStyle(.link)
                     TextField("Name this voice — “Me, reading”", text: $name)
                         .textFieldStyle(.roundedBorder)
+                        .disabled(saving)
+                    if engine.voices.contains(where: { $0.name == name.trimmed }) {
+                        Text("That name is already in your library. Choose another name.")
+                            .font(.caption).foregroundStyle(Palette.blood)
+                    }
                     DisclosureGroup("What you actually said") {
                         TextEditor(text: $transcript)
                             .font(.callout).frame(height: 70)
                             .overlay(RoundedRectangle(cornerRadius: 4).stroke(Palette.rule))
                     }
                     .font(.caption)
+                    .disabled(saving)
                 }
             }
 
@@ -74,12 +82,16 @@ struct RecordView: View {
                       systemImage: "mic.slash")
                     .font(.callout).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+                Button("Open microphone settings") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                }
             }
 
             Spacer(minLength: 0)
             HStack {
-                Button("Cancel") { recorder.stop(); dismiss() }
+                Button("Cancel") { player?.stop(); recorder.stop(); dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .disabled(saving)
                 Spacer()
                 if saving { ProgressView().controlSize(.small) }
                 Button(saving ? "Registering…" : "Save voice") { Task { await save() } }
@@ -88,7 +100,14 @@ struct RecordView: View {
             }
         }
         .padding(24)
-        .frame(width: 520, height: 560)
+        .frame(width: 540, height: 620)
+        .background(Palette.background).foregroundStyle(Palette.ink)
+        .interactiveDismissDisabled(saving)
+        .onDisappear {
+            active = false
+            recorder.stop()
+            player?.stop()
+        }
     }
 
     private var recordRow: some View {
@@ -97,7 +116,7 @@ struct RecordView: View {
                 Task { await toggle() }
             }
             .controlSize(.large)
-            .disabled(saving)
+            .disabled(saving || requesting)
 
             // The meter is the only thing that tells you the microphone is
             // actually hearing you before you have something to play back.
@@ -130,25 +149,35 @@ struct RecordView: View {
             recorder.stop()
             return
         }
+        guard !requesting else { return }
+        player?.stop()
+        requesting = true
+        defer { requesting = false }
         guard await Recorder.requestAccess() else {
             denied = true
             return
         }
+        guard active else { return }
         denied = false
         do { try recorder.start() } catch { self.error = error.localizedDescription }
     }
 
     private func playBack() {
         guard let data = recorder.recorded else { return }
-        player = try? AVAudioPlayer(data: data)
-        player?.play()
+        do {
+            player?.stop()
+            player = try AVAudioPlayer(data: data)
+            guard player?.play() == true else { throw EngineError.server("The recording could not be played.") }
+        } catch { self.error = error.localizedDescription }
     }
 
     /// Everything that has to be true before there is a voice to save.
     private var canSave: Bool {
         recorder.recorded != nil && !recorder.isRecording && !saving
             && recorder.seconds >= Recorder.shortest
-            && !name.trimmed.isEmpty
+            && !name.trimmed.isEmpty && name.trimmed.count <= 64
+            && !transcript.trimmed.isEmpty && transcript.count <= 10_000
+            && !engine.voices.contains(where: { $0.name == name.trimmed })
     }
 
     /// One line that changes with the situation rather than one that does not.
@@ -167,8 +196,12 @@ struct RecordView: View {
 
     private func save() async {
         guard let wav = recorder.recorded else { return }
+        guard canSave else { return }
+        player?.stop()
+        error = nil
         saving = true
-        defer { saving = false }
+        engine.activity = "Saving a voice"
+        defer { saving = false; engine.activity = nil }
         do {
             try await engine.register(name: name.trimmed, wav: wav,
                                       transcript: transcript.trimmed)

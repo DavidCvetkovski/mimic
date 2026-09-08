@@ -18,6 +18,8 @@ struct RecordView: View {
     @State private var problem: String?
     @State private var denied = false
     @State private var player: AVAudioPlayer?
+    @State private var captureTask: Task<Void, Never>?
+    @State private var requestingAccess = false
 
     static let script = """
         My name is — and this is my voice. I am reading a short paragraph so it \
@@ -65,6 +67,17 @@ struct RecordView: View {
                               systemImage: "mic.slash")
                             .font(.footnote).foregroundStyle(.orange)
                             .fixedSize(horizontal: false, vertical: true)
+                        Button("Open Settings", systemImage: "gearshape") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    }
+                    if saving, let busy = store.busy {
+                        HStack {
+                            ProgressView()
+                            Text(busy).font(.footnote).foregroundStyle(Palette.inkMuted)
+                        }
                     }
                     if !store.canRecord && !saving {
                         Label("Cloning needs a one-off 400 MB download the first time.",
@@ -80,7 +93,8 @@ struct RecordView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { recorder.stop(); dismiss() }
+                    Button("Cancel") { recorder.stop(); player?.stop(); dismiss() }
+                        .disabled(saving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(saving ? "Saving…" : "Save") { Task { await save() } }
@@ -89,14 +103,21 @@ struct RecordView: View {
             }
         }
         .interactiveDismissDisabled(saving)
+        .onDisappear {
+            captureTask?.cancel()
+            recorder.stop()
+            player?.stop()
+        }
     }
 
     private var recordRow: some View {
         HStack(spacing: 12) {
-            Button(recorder.isRecording ? "Stop" : buttonLabel) { Task { await toggle() } }
+            Button(recorder.isRecording ? "Stop" : buttonLabel) {
+                captureTask = Task { await toggle() }
+            }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
-                .disabled(saving)
+                .disabled(saving || requestingAccess)
 
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
@@ -121,7 +142,7 @@ struct RecordView: View {
     private var canSave: Bool {
         recorder.hasRecording && !recorder.isRecording && !saving
             && recorder.seconds >= Recorder.shortest
-            && !name.trimmingCharacters(in: .whitespaces).isEmpty
+            && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// One line that changes with the situation rather than four that do not.
@@ -144,8 +165,13 @@ struct RecordView: View {
 
     private func toggle() async {
         problem = nil
+        player?.stop()
         if recorder.isRecording { return recorder.stop() }
-        guard await Recorder.requestAccess() else { denied = true; return }
+        requestingAccess = true
+        defer { requestingAccess = false }
+        let granted = await Recorder.requestAccess()
+        guard !Task.isCancelled else { return }
+        guard granted else { denied = true; return }
         denied = false
         recorder.discard()
         do { try recorder.start() } catch { problem = error.localizedDescription }
@@ -166,10 +192,11 @@ struct RecordView: View {
     }
 
     private func save() async {
+        player?.stop()
         saving = true
         defer { saving = false }
         do {
-            try await store.register(name: name.trimmingCharacters(in: .whitespaces),
+            try await store.register(name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                                      samples: recorder.samples,
                                      sampleRate: recorder.sampleRate,
                                      transcript: RecordView.script)

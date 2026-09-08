@@ -34,10 +34,10 @@ struct VoicesView: View {
                     Button("Done") { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { recording = true } label: {
+                    Button { stopPreview(); store.player.pause(); recording = true } label: {
                         Label("Add a voice", systemImage: "mic.badge.plus")
                     }
-                    .disabled(store.isSpeaking)
+                    .disabled(!store.canSpeak)
                 }
             }
             .sheet(isPresented: $recording) {
@@ -49,6 +49,7 @@ struct VoicesView: View {
                 Button("Cancel", role: .cancel) { renaming = nil }
                 Button("Rename") {
                     guard let voice = renaming else { return }
+                    stopPreview()
                     problem = store.rename(voice.name, to: fresh)
                     renaming = nil
                 }
@@ -62,7 +63,8 @@ struct VoicesView: View {
                                                    set: { if !$0 { deleting = nil } }),
                                 titleVisibility: .visible) {
                 Button("Delete \(deleting?.name ?? "")", role: .destructive) {
-                    if let voice = deleting { store.delete(voice.name) }
+                    stopPreview()
+                    if let voice = deleting { problem = store.delete(voice.name) }
                     deleting = nil
                 }
                 Button("Keep it", role: .cancel) { deleting = nil }
@@ -70,14 +72,15 @@ struct VoicesView: View {
                 Text("The recording and the profile go with it. Recording another "
                      + "takes about fifteen seconds.")
             }
-            .alert("That name will not work", isPresented: .init(
+            .alert("Could not update this voice", isPresented: .init(
                 get: { problem != nil }, set: { if !$0 { problem = nil } })) {
                 Button("All right", role: .cancel) { problem = nil }
             } message: {
                 Text(problem ?? "")
             }
         }
-        .onDisappear { player?.stop() }
+        .onAppear { store.player.pause() }
+        .onDisappear { stopPreview() }
     }
 
     private var empty: some View {
@@ -137,6 +140,7 @@ struct VoicesView: View {
             }
             .buttonStyle(.plain)
             .disabled(voice.recording == nil)
+            .accessibilityLabel(playing == voice.name ? "Stop \(voice.name) preview" : "Preview \(voice.name)")
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(voice.name).font(.body)
@@ -152,6 +156,7 @@ struct VoicesView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { store.selected = voice.name }
+        .accessibilityAction(named: "Use this voice") { store.selected = voice.name }
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) { deleting = voice } label: {
                 Label("Delete", systemImage: "trash")
@@ -187,10 +192,19 @@ struct VoicesView: View {
             return
         }
         guard let url = voice.recording else { return }
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-        try? AVAudioSession.sharedInstance().setActive(true)
-        player = try? AVAudioPlayer(contentsOf: url)
-        player?.play()
+        stopPreview()
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+            player = try AVAudioPlayer(contentsOf: url)
+            guard player?.play() == true else {
+                problem = "The recording could not be played. Try again."
+                return
+            }
+        } catch {
+            problem = error.localizedDescription
+            return
+        }
         playing = voice.name
 
         // Tagged, because the name alone is not enough: play a voice, stop it,
@@ -203,5 +217,12 @@ struct VoicesView: View {
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             if run == thisRun { playing = nil }
         }
+    }
+
+    private func stopPreview() {
+        player?.stop()
+        player = nil
+        playing = nil
+        run += 1
     }
 }

@@ -1,5 +1,7 @@
 import AVFoundation
 import Foundation
+import UIKit
+import MimicKit
 
 /// Microphone capture, as raw samples.
 ///
@@ -36,14 +38,42 @@ final class Recorder: ObservableObject {
     static let shortest: Double = 3
 
     private let engine = AVAudioEngine()
-    private var began = Date()
-    private var ticker: Timer?
+    private var run = UUID()
+    private var watchers: [NSObjectProtocol] = []
+
+    init() {
+        let centre = NotificationCenter.default
+        for notification in [AVAudioSession.interruptionNotification,
+                             AVAudioSession.routeChangeNotification,
+                             UIApplication.didEnterBackgroundNotification] {
+            watchers.append(centre.addObserver(forName: notification, object: nil,
+                                                queue: .main) { [weak self] note in
+                if note.name == AVAudioSession.routeChangeNotification {
+                    let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+                    guard reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue
+                    else { return }
+                }
+                if note.name == AVAudioSession.interruptionNotification {
+                    let type = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                    guard type == AVAudioSession.InterruptionType.began.rawValue else { return }
+                }
+                MainActor.assumeIsolated { self?.stop() }
+            })
+        }
+    }
+
+    deinit {
+        for watcher in watchers { NotificationCenter.default.removeObserver(watcher) }
+    }
 
     func start() throws {
         guard !isRecording else { return }
         samples.removeAll()
         hasRecording = false
         reachedLimit = false
+        seconds = 0
+        run = UUID()
+        let thisRun = run
 
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker])
@@ -51,6 +81,9 @@ final class Recorder: ObservableObject {
 
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw MimicError.inference("The microphone is unavailable. Reconnect it and try again.")
+        }
         sampleRate = Int(format.sampleRate)
 
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
@@ -59,23 +92,27 @@ final class Recorder: ObservableObject {
             let chunk = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
             var peak: Float = 0
             for value in chunk { peak = max(peak, abs(value)) }
-            Task { @MainActor [weak self] in
-                self?.samples.append(contentsOf: chunk)
-                self?.level = Double(min(peak * 2.6, 1))
-            }
-        }
-        try engine.start()
-        isRecording = true
-        began = Date()
-        ticker = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, self.isRecording else { return }
-                self.seconds = Date().timeIntervalSince(self.began)
-                if self.seconds >= Recorder.longest {
-                    self.reachedLimit = true
-                    self.stop()
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.isRecording, self.run == thisRun else { return }
+                    let remaining = max(0, Int(Self.longest * Double(self.sampleRate)) - self.samples.count)
+                    self.samples.append(contentsOf: chunk.prefix(remaining))
+                    self.seconds = Double(self.samples.count) / Double(self.sampleRate)
+                    self.level = Double(min(peak * 2.6, 1))
+                    if self.seconds >= Self.longest {
+                        self.reachedLimit = true
+                        self.stop()
+                    }
                 }
             }
+        }
+        do {
+            try engine.start()
+            isRecording = true
+        } catch {
+            input.removeTap(onBus: 0)
+            engine.stop()
+            throw error
         }
     }
 
@@ -83,14 +120,14 @@ final class Recorder: ObservableObject {
         guard isRecording else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        ticker?.invalidate()
-        ticker = nil
         isRecording = false
         level = 0
         hasRecording = !samples.isEmpty
     }
 
     func discard() {
+        stop()
+        run = UUID()
         samples.removeAll()
         hasRecording = false
         reachedLimit = false

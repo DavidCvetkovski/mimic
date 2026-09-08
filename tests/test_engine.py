@@ -23,6 +23,7 @@ class TempHome(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="mimic-test-"))
+        self.previous_home = os.environ.get("MIMIC_HOME")
         os.environ["MIMIC_HOME"] = str(self.tmp)
         for name in [m for m in sys.modules if m.startswith("core")]:
             del sys.modules[name]
@@ -31,7 +32,10 @@ class TempHome(unittest.TestCase):
         self.assertTrue(str(self.tmp) in str(engine.HOME))
 
     def tearDown(self):
-        os.environ.pop("MIMIC_HOME", None)
+        if self.previous_home is None:
+            os.environ.pop("MIMIC_HOME", None)
+        else:
+            os.environ["MIMIC_HOME"] = self.previous_home
         shutil.rmtree(self.tmp, ignore_errors=True)
 
 
@@ -136,10 +140,12 @@ class Caching(TempHome):
         self.assertNotEqual(engine._cache_path("hi", "a", 42),
                             engine._cache_path("hi", "b", 42))
 
-    def test_the_key_is_prefixed_with_the_voice(self):
-        # So re-recording or deleting a voice can drop only its own audio.
+    def test_the_key_is_prefixed_with_a_safe_voice_identifier(self):
+        # Keep per-voice invalidation without filenames that exceed the OS
+        # limit or interpret the person's punctuation as a glob pattern.
         engine = self.engine_module.Engine(idle_unload=0)
-        self.assertTrue(engine._cache_path("hi", "David", 42).name.startswith("David-"))
+        self.assertTrue(engine._cache_path("hi", "David", 42).name.startswith(
+            engine._cache_prefix("David")))
 
     def test_re_registering_a_voice_drops_its_cached_audio(self):
         # The voice changed, so everything previously said in it is now wrong.
@@ -193,10 +199,6 @@ class WavWriting(TempHome):
         self.assertEqual(self.engine_module._wav_seconds(b"not a wav"), 0.0)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CachePruning(TempHome):
     """Cached audio is bounded, or a long-lived install grows without limit."""
 
@@ -230,3 +232,7 @@ class CachePruning(TempHome):
         import shutil
         shutil.rmtree(self.engine_module.CACHE_DIR, ignore_errors=True)
         self.engine_module._prune_cache()
+
+
+if __name__ == "__main__":
+    unittest.main()

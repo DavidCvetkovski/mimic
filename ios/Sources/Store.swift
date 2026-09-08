@@ -30,6 +30,7 @@ final class Store: ObservableObject {
     /// confusion the Mac's save button had, in a different place.
     @Published var selected: String? {
         didSet {
+            UserDefaults.standard.set(selected, forKey: "selectedVoice")
             guard oldValue != selected, oldValue != nil else { return }
             discardAudio()
         }
@@ -67,11 +68,23 @@ final class Store: ObservableObject {
     private var playerChanges: AnyCancellable?
 
     init() {
+        text = UserDefaults.standard.string(forKey: "speechDraft") ?? Self.initialText
+        selected = UserDefaults.standard.string(forKey: "selectedVoice")
         playerChanges = player.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
     }
-    @Published var text = "Every word of this was spoken by a model running on my phone, in a voice it learned from fifteen seconds of me reading a paragraph aloud."
+    private static let initialText = "Every word of this was spoken by a model running on my phone, in a voice it learned from fifteen seconds of me reading a paragraph aloud."
+    @Published var text: String {
+        didSet {
+            UserDefaults.standard.set(text, forKey: "speechDraft")
+            guard oldValue != text else { return }
+            if isSpeaking || player.buffered > 0 { discardAudio() }
+        }
+    }
+    private var renderedText = ""
+    private var renderedVoice = ""
+    private var activeRun: UUID?
     @Published var problem: String?
 
     private var runtime: Runtime?
@@ -169,7 +182,7 @@ final class Store: ObservableObject {
     @Published private(set) var busy: String?
 
     /// Whether there is an engine to speak with right now.
-    var canSpeak: Bool { runtime != nil }
+    var canSpeak: Bool { runtime != nil && task == nil && busy == nil }
 
     func refreshVoices() {
         let store = runtime?.voices ?? VoiceStore(root: voicesDirectory)
@@ -204,7 +217,7 @@ final class Store: ObservableObject {
     /// running dry mid-sentence. StreamPlayer.shouldStart is the arithmetic
     /// that separates the two.
     func speak() {
-        guard let runtime, let voice = selected, !isSpeaking else { return }
+        guard canSpeak, let runtime, let voice = selected, !isSpeaking else { return }
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !words.isEmpty else { return }
 
@@ -213,6 +226,10 @@ final class Store: ObservableObject {
         lastTiming = ""
         estimate = Runtime.estimate(words)
         player.reset()
+        renderedText = words
+        renderedVoice = voice
+        let run = UUID()
+        activeRun = run
 
         // Tell them how long before they can press play, and count it down —
         // unless this passage is already on disk, in which case there is no
@@ -232,73 +249,66 @@ final class Store: ObservableObject {
 
         task = Task { [weak self] in
             defer {
-                Task { @MainActor [weak self] in
-                    self?.isSpeaking = false
-                    self?.progress = ""
-                    self?.task = nil
+                if let self {
+                    self.task = nil
+                    if self.activeRun == run {
+                        self.isSpeaking = false
+                        self.progress = ""
+                        self.stopWaitCountdown()
+                        self.activeRun = nil
+                    }
+                    if self.busy == "Stopping…" { self.busy = nil }
                 }
             }
             do {
-                var worstRtf = 1.2
-                var fromCache = false
-                try await Task.detached(priority: .userInitiated) {
+                try await Task.detached(priority: .userInitiated) { [weak self] in
+                    var worstRtf = 1.2
                     try runtime.synthesizeStream(text: words, voice: voice,
-                                                 options: options) { chunk in
-                        // Ordered, deliberately.
-                        //
-                        // This was `Task { @MainActor in … }`, and unstructured
-                        // tasks are scheduled rather than queued, so nothing
-                        // promises that sentence one reaches the player before
-                        // sentence two. In practice sentences arrive seconds
-                        // apart and it never bit — the passage that did come
-                        // out shuffled was Runtime.split's doing, not this —
-                        // but a queue of audio buffers should not depend on
-                        // that. The main queue is ordered and is the main
-                        // actor's executor, which gets both properties.
-                        DispatchQueue.main.async { [weak self] in
+                                                 options: options,
+                                                 shouldCancel: { cancel.isCancelled }) { chunk in
+                        guard !cancel.isCancelled else { return false }
+                        worstRtf = max(worstRtf, chunk.realtimeFactor)
+                        let measuredRate = worstRtf
+                        // Deliver in order, and finish each delivery before declaring
+                        // synthesis complete. A cancelled run can never revive playback.
+                        DispatchQueue.main.sync { [weak self] in
                             MainActor.assumeIsolated {
-                            guard let self else { return }
-                            self.player.append(chunk.samples, sampleRate: rate)
-                            if chunk.cached { fromCache = true }
-                            worstRtf = max(worstRtf, chunk.realtimeFactor)
-                            self.progress = "sentence \(chunk.index + 1) of \(chunk.of)"
-                            if self.player.isPlaying { self.stopWaitCountdown() }
-                            if !self.player.isPlaying,
-                               StreamPlayer.shouldStart(
-                                   buffered: self.player.buffered,
-                                   estimate: max(self.estimate, self.player.buffered),
-                                   realtimeFactor: worstRtf) {
-                                self.player.play()
-                            }
+                                guard let self, self.activeRun == run,
+                                      !cancel.isCancelled else { return }
+                                self.player.append(chunk.samples, sampleRate: rate)
+                                self.progress = "sentence \(chunk.index + 1) of \(chunk.of)"
+                                if !self.player.isPlaying, self.player.allowsAutomaticPlayback,
+                                   StreamPlayer.shouldStart(
+                                       buffered: self.player.buffered,
+                                       estimate: max(self.estimate, self.player.buffered),
+                                       realtimeFactor: measuredRate) {
+                                    self.player.play()
+                                }
+                                if self.player.isPlaying { self.stopWaitCountdown() }
                             }
                         }
                         return !cancel.isCancelled
                     }
                 }.value
 
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    self.player.isComplete = true
-                    if !self.player.isPlaying { self.player.play() }
-                    let elapsed = Date().timeIntervalSince(began)
-                    self.stopWaitCountdown()
-                    guard !fromCache else {
-                        // A disk read is not a measurement of how fast this
-                        // phone synthesises. Learning from it would make every
-                        // later countdown promise something it cannot deliver.
-                        self.lastTiming = "played from cache"
-                        return
-                    }
-                    let measured = elapsed / max(self.player.buffered, 0.01)
-                    self.knownRealtimeFactor = measured      // for next time
-                    self.lastTiming = String(
-                        format: "%.1fs for %.1fs of audio · %.2f× real time",
-                        elapsed, self.player.buffered, measured)
+                guard let self, self.activeRun == run, !cancel.isCancelled else { return }
+                self.player.isComplete = true
+                if !self.player.isPlaying, self.player.allowsAutomaticPlayback { self.player.play() }
+                let elapsed = Date().timeIntervalSince(began)
+                self.stopWaitCountdown()
+                guard !heardBefore else {
+                    self.lastTiming = "played from cache"
+                    return
                 }
+                let measured = elapsed / max(self.player.buffered, 0.01)
+                self.knownRealtimeFactor = measured
+                self.lastTiming = String(
+                    format: "%.1fs for %.1fs of audio · %.2f× real time",
+                    elapsed, self.player.buffered, measured)
             } catch {
-                await MainActor.run { [weak self] in
-                    if !cancel.isCancelled { self?.problem = error.localizedDescription }
-                }
+                guard let self, self.activeRun == run, !cancel.isCancelled else { return }
+                self.player.reset()
+                self.problem = error.localizedDescription
             }
         }
         self.cancel = cancel
@@ -316,7 +326,7 @@ final class Store: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 // It stops the moment there is sound, however the estimate did.
-                if self.player.isPlaying || !self.isSpeaking {
+                if self.player.isPlaying || !self.player.allowsAutomaticPlayback || !self.isSpeaking {
                     self.stopWaitCountdown()
                     return
                 }
@@ -356,7 +366,8 @@ final class Store: ObservableObject {
     private func discardAudio() {
         cancel?.cancel()
         task?.cancel()
-        task = nil
+        activeRun = nil
+        if task != nil { busy = "Stopping…" }
         stopWaitCountdown()
         player.reset()
         isSpeaking = false
@@ -366,13 +377,7 @@ final class Store: ObservableObject {
     }
 
     func stopSpeaking() {
-        stopWaitCountdown()
-        cancel?.cancel()
-        task?.cancel()
-        task = nil
-        player.stop()
-        isSpeaking = false
-        progress = ""
+        discardAudio()
     }
 
     // MARK: - Cloning
@@ -383,9 +388,27 @@ final class Store: ObservableObject {
     /// front: it is 400 MB that someone who only imports a voice never needs.
     func register(name: String, samples: [Float], sampleRate: Int,
                   transcript: String) async throws {
-        if !canRecord {
-            await download(ModelDownload.recording, note: "one-off, for cloning")
+        guard canSpeak else { throw MimicError.inference("Wait for the voice model to finish its current task.") }
+        if let issue = VoiceStore.problem(withName: name) { throw MimicError.badVoice(issue) }
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !voices.contains(where: { $0.caseInsensitiveCompare(clean) == .orderedSame }) else {
+            throw MimicError.badVoice("There is already a voice called \(clean). Choose another name.")
         }
+        // Keep the recording sheet mounted while fetching its optional encoder.
+        // Changing the app's startup stage here used to destroy the unsaved recording.
+        busy = "Getting the cloning model…"
+        if !canRecord {
+            do {
+                for try await fraction in ModelDownload.run(into: modelDirectory,
+                                                            files: ModelDownload.recording) {
+                    busy = "Getting the cloning model… \(Int(fraction * 100))%"
+                }
+            } catch {
+                busy = nil
+                throw error
+            }
+        }
+        player.pause()
         // Put the speaking model down before picking the encoder up.
         //
         // The three speaking graphs are about 560 MB and the encoder another
@@ -394,7 +417,6 @@ final class Store: ObservableObject {
         // registration reads a recording, and nothing is being spoken while it
         // does. Reloading afterwards costs a couple of seconds, spent behind
         // the "Saving…" the sheet is already showing.
-        runtime?.cache?.forget(voice: name)   // re-recording replaces the voice
         runtime = nil
         busy = "Saving the voice"
 
@@ -403,7 +425,7 @@ final class Store: ObservableObject {
             try await Task.detached(priority: .userInitiated) {
                 let registrar = try Registrar(modelDirectory: directories.0,
                                               voicesDirectory: directories.1)
-                try registrar.register(name: name, samples: samples,
+                try registrar.register(name: clean, samples: samples,
                                        sampleRate: sampleRate, transcript: transcript)
             }.value
         } catch {
@@ -412,7 +434,7 @@ final class Store: ObservableObject {
         }
         await reloadEngine()
         refreshVoices()
-        selected = name
+        selected = clean
     }
 
     // MARK: - What is on the disk
@@ -454,6 +476,7 @@ final class Store: ObservableObject {
 
     /// Remove the writing model, leaving everything else alone.
     func removeWriter() {
+        guard writerFraction == nil, busy == nil else { return }
         for file in ModelDownload.writing {
             try? FileManager.default.removeItem(at: modelDirectory.appending(path: file.local))
         }
@@ -470,7 +493,8 @@ final class Store: ObservableObject {
 
     /// Write the audio out, and hand back the file for the share sheet.
     func exportAudio() async throws -> URL {
-        let name = Export.fileName(for: text, voice: selected ?? "Mimic", extension: "m4a")
+        guard canExport else { throw MimicError.inference("Finish a passage before saving it.") }
+        let name = Export.fileName(for: renderedText, voice: renderedVoice, extension: "m4a")
         let url = FileManager.default.temporaryDirectory.appending(path: name)
         let samples = player.samples
         let rate = player.sampleRate
@@ -483,7 +507,8 @@ final class Store: ObservableObject {
     /// The same audio over a black picture, for the places that take video and
     /// not sound.
     func exportVideo() async throws -> URL {
-        let name = Export.fileName(for: text, voice: selected ?? "Mimic", extension: "mp4")
+        guard canExport else { throw MimicError.inference("Finish a passage before saving it.") }
+        let name = Export.fileName(for: renderedText, voice: renderedVoice, extension: "mp4")
         let url = FileManager.default.temporaryDirectory.appending(path: name)
         try await Export.video(samples: player.samples, sampleRate: player.sampleRate, to: url)
         return url
@@ -493,6 +518,7 @@ final class Store: ObservableObject {
 
     /// Fetch the writing model, on request and never otherwise.
     func downloadWriter() async throws {
+        guard writerFraction == nil else { return }
         writerFraction = 0
         defer { writerFraction = nil }
         for try await fraction in ModelDownload.run(into: modelDirectory,
@@ -511,6 +537,8 @@ final class Store: ObservableObject {
     /// there is a passage on screen to read.
     func write(_ ask: String, system: String) async throws -> String {
         guard canWrite else { throw MimicError.modelMissing("writer.onnx") }
+        guard canSpeak else { throw MimicError.inference("Wait for the voice model to finish its current task.") }
+        player.pause()
         let directory = modelDirectory
         let cores = Runtime.recommendedThreads
         runtime = nil
@@ -536,16 +564,31 @@ final class Store: ObservableObject {
         }.value
         busy = nil
         if runtime == nil {
-            problem = "The voice model did not come back. Reopen Mimic to load it again."
+            problem = "The voice model could not reload. Try loading it again."
         }
     }
 
-    func delete(_ name: String) {
-        try? FileManager.default.removeItem(at: voicesDirectory.appending(path: name))
+    var needsEngineRecovery: Bool { runtime == nil && busy == nil && stage == .ready }
+
+    func recoverSpeech() async {
+        guard needsEngineRecovery else { return }
+        problem = nil
+        busy = "Loading the voice model…"
+        await reloadEngine()
+    }
+
+    @discardableResult
+    func delete(_ name: String) -> String? {
+        do {
+            try VoiceStore(root: voicesDirectory).delete(name)
+        } catch {
+            return error.localizedDescription
+        }
         // Otherwise a new voice recorded under the same name would answer with
         // this one's audio.
         runtime?.cache?.forget(voice: name)
         refreshVoices()
+        return nil
     }
 }
 

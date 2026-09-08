@@ -13,6 +13,7 @@ struct SettingsView: View {
 
     @State private var sizes = Store.Sizes()
     @State private var confirmingWriterRemoval = false
+    @State private var problem: String?
 
     var body: some View {
         NavigationStack {
@@ -40,14 +41,23 @@ struct SettingsView: View {
                         Button("Remove the writer", role: .destructive) {
                             confirmingWriterRemoval = true
                         }
+                        .disabled(writer.isWriting || store.busy != nil || store.writerFraction != nil)
                     } else {
                         Button("Download the writer") {
                             Task {
-                                try? await store.downloadWriter()
+                                do { try await store.downloadWriter() }
+                                catch { problem = error.localizedDescription }
                                 sizes = store.sizes()
                             }
                         }
                         .disabled(store.writerFraction != nil)
+                    }
+                    if let fraction = store.writerFraction {
+                        ProgressView("Downloading… \(Int(fraction * 100))%", value: fraction)
+                    }
+                    if let problem {
+                        Label(problem, systemImage: "exclamationmark.triangle")
+                            .font(.footnote).foregroundStyle(Palette.blood)
                     }
                 } header: {
                     Text("Writing")

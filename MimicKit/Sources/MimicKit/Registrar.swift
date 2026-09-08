@@ -29,10 +29,8 @@ public struct Registrar {
     public func register(name: String, samples: [Float], sampleRate: Int,
                          transcript: String) throws -> VoiceProfile {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty, clean.count <= 64,
-              !clean.contains("/"), clean != ".", clean != ".." else {
-            throw MimicError.badVoice("a voice name must be one path component")
-        }
+        if let issue = VoiceStore.problem(withName: clean) { throw MimicError.badVoice(issue) }
+        guard sampleRate > 0 else { throw MimicError.badVoice("the recording has no sample rate") }
         let text = transcript.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !text.isEmpty else {
             throw MimicError.badVoice("the transcript must not be empty")

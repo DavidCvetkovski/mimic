@@ -18,8 +18,24 @@ project — see below.
 - **Manages the engine.** On launch it looks for a running engine and attaches
   to it; if there is none it starts `core/server.py` as a child process and
   waits for health. Quitting stops it again.
-- **Feels like a Mac app.** ⌘↩ to speak, a save panel for the WAV, right-click a
-  voice to play, rename or delete it.
+- **Keeps your work.** The draft and selected voice survive app relaunches.
+- **Shares finished speech.** Export M4A audio, MP4 video, or the original WAV.
+- **Offers a visible voice library.** Preview, select, rename, and delete voices
+  from the Voices button. Starter passages are shared with iOS.
+- **Explains storage.** Settings shows model, voice, and cache sizes, with controls
+  to clear generated audio and release model memory. An engine already running
+  from an older checkout must be restarted to expose these controls.
+- **Handles interrupted work.** Stop cancels incoming audio; Pause stays paused
+  while subsequent sentences arrive. Incomplete streams cannot be exported.
+
+## Verification
+
+```bash
+python3 macos/Tests/run.py
+```
+
+This checks the native HTTP client against an isolated local server, without
+loading the voice model or modifying your voice library.
 
 ## Why it does not bundle Python
 
@@ -57,3 +73,5 @@ none — so without `codesign` the prompt reappears on every launch and then fai
 | `Sources/ContentView.swift` | the main window |
 | `Sources/RecordView.swift` | the add-a-voice sheet |
 | `Sources/Recorder.swift` | microphone capture to WAV |
+| `Sources/VoicesView.swift` | voice library and reference playback |
+| `Sources/SettingsView.swift` | storage, cache, and model memory |

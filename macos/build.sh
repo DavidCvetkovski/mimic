@@ -8,10 +8,10 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="$HERE/build/Mimic.app"
-TARGET="${TARGET:-arm64-apple-macos14.0}"
+TARGET="${TARGET:-$(uname -m)-apple-macos14.0}"
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$HERE/build/module-cache"
 
 echo "compiling…"
 # Some of MimicKit is compiled in rather than linked. This app talks HTTP to
@@ -21,6 +21,7 @@ echo "compiling…"
 # and Export are pure Foundation and AVFoundation.
 KIT="$HERE/../MimicKit/Sources/MimicKit"
 swiftc -O -parse-as-library -target "$TARGET" \
+    -module-cache-path "$HERE/build/module-cache" \
     -o "$APP/Contents/MacOS/Mimic" \
     "$HERE"/Sources/*.swift \
     "$KIT/StreamPlayer.swift" \

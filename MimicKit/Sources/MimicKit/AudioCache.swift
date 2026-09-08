@@ -10,9 +10,8 @@ import Foundation
 /// slower than real time, so re-rendering a passage someone just listened to
 /// costs them the entire wait again for nothing.
 ///
-/// Mirrors the Python engine's cache deliberately, down to the key and the
-/// limit, so the two behave the same way and a bug in one is a bug you can find
-/// in the other.
+/// Uses the same bounded local-cache policy as the Python engine. Cache files
+/// are specific to each engine; portable voice profiles are shared separately.
 public final class AudioCache: @unchecked Sendable {
 
     private let directory: URL

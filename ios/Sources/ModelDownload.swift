@@ -67,39 +67,45 @@ enum ModelDownload {
     static let approximateBytes: Int64 = 600 * 1024 * 1024
 
     static func isComplete(at directory: URL) -> Bool {
-        speaking.allSatisfy {
-            FileManager.default.fileExists(atPath: directory.appending(path: $0.local).path)
-        }
+        speaking.allSatisfy { isPresent(directory.appending(path: $0.local)) }
     }
 
     static func canWrite(at directory: URL) -> Bool {
-        writing.allSatisfy {
-            FileManager.default.fileExists(atPath: directory.appending(path: $0.local).path)
-        }
+        writing.allSatisfy { isPresent(directory.appending(path: $0.local)) }
     }
 
     static func canRecord(at directory: URL) -> Bool {
-        FileManager.default.fileExists(
-            atPath: directory.appending(path: "codec_encoder_fp16.onnx").path)
+        recording.allSatisfy { isPresent(directory.appending(path: $0.local)) }
+    }
+
+    private static func isPresent(_ file: URL) -> Bool {
+        guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        else { return false }
+        return values.isRegularFile == true && (values.fileSize ?? 0) > 0
     }
 
     /// Yields progress from 0 to 1, each file landing at its declared path.
     static func run(into directory: URL, files: [File] = speaking) -> AsyncThrowingStream<Double, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     for (index, file) in files.enumerated() {
+                        try Task.checkCancellation()
                         let destination = directory.appending(path: file.local)
                         try FileManager.default.createDirectory(
                             at: destination.deletingLastPathComponent(),
                             withIntermediateDirectories: true)
-                        if FileManager.default.fileExists(atPath: destination.path) {
+                        if isPresent(destination) {
                             continuation.yield(Double(index + 1) / Double(files.count))
                             continue
                         }
-                        guard let url = URL(string: "\(file.base)/\(file.remote)") else { continue }
+                        guard let url = URL(string: "\(file.base)/\(file.remote)") else {
+                            throw MimicDownloadError.failed(file.local)
+                        }
                         let (temporary, response) = try await URLSession.shared.download(from: url)
-                        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                        try Task.checkCancellation()
+                        guard (response as? HTTPURLResponse)?.statusCode == 200,
+                              isPresent(temporary) else {
                             throw MimicDownloadError.failed(file.local)
                         }
                         try? FileManager.default.removeItem(at: destination)
@@ -111,6 +117,7 @@ enum ModelDownload {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 }

@@ -25,12 +25,15 @@ public final class StreamPlayer: ObservableObject {
     /// Set once every chunk has been handed over, so the end of the audio can
     /// be told apart from merely having caught up with generation.
     @Published public var isComplete = false
+    /// A deliberate pause (including an interruption) must survive later chunks.
+    public private(set) var allowsAutomaticPlayback = true
+    @Published public private(set) var problem: String?
 
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
     private var format: AVAudioFormat?
     private var ticker: Timer?
-    private var startedAt: Date?
+    private var lastTick: TimeInterval?
     /// Every buffer handed to the node, kept so it can be played again.
     ///
     /// A player node consumes what it is scheduled: once it has rendered the
@@ -159,15 +162,19 @@ public final class StreamPlayer: ObservableObject {
 
     public func reset() {
         stop()
-        rendered.removeAll()
-        buffered = 0
-        position = 0
-        isComplete = false
+        allowsAutomaticPlayback = true
+        problem = nil
     }
 
     /// Hand over one finished chunk. Starts the engine on the first one.
     public func append(_ samples: [Float], sampleRate: Int) {
-        guard !samples.isEmpty else { return }
+        guard !samples.isEmpty, sampleRate > 0 else { return }
+        updatePosition()
+        guard format == nil || Int(format!.sampleRate) == sampleRate else {
+            problem = "The audio format changed during playback. Please generate the passage again."
+            pause()
+            return
+        }
         if format == nil {
             guard let made = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                            sampleRate: Double(sampleRate),
@@ -190,7 +197,7 @@ public final class StreamPlayer: ObservableObject {
     }
 
     public func play() {
-        guard !isPlaying, format != nil else { return }
+        guard !isPlaying, format != nil, buffered > 0 else { return }
         // Starting again from the end means starting again from the beginning.
         if hasFinished { rewind() }
         do {
@@ -201,15 +208,16 @@ public final class StreamPlayer: ObservableObject {
             if !engine.isRunning { try engine.start() }
             node.play()
             isPlaying = true
-            startedAt = Date().addingTimeInterval(-position)
+            problem = nil
+            lastTick = ProcessInfo.processInfo.systemUptime
             ticker = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    guard let self, let startedAt = self.startedAt, self.isPlaying else { return }
-                    self.position = min(Date().timeIntervalSince(startedAt), self.buffered)
+                    guard let self, self.isPlaying else { return }
+                    self.updatePosition()
                     // Reaching the end is not the same as running out of
                     // buffer: only the first means playback is over, and only
                     // then should the button offer to start it again.
-                    if self.isComplete, self.position >= self.buffered - 0.05 {
+                    if self.isComplete, self.position >= self.buffered {
                         self.pause()
                         self.position = self.buffered
                     }
@@ -217,13 +225,15 @@ public final class StreamPlayer: ObservableObject {
             }
         } catch {
             isPlaying = false
+            allowsAutomaticPlayback = false
+            problem = error.localizedDescription
         }
     }
 
     /// Played all the way to the end of a passage that is finished being made.
     /// Merely catching up with generation is not the same thing.
     private var hasFinished: Bool {
-        isComplete && buffered > 0 && position >= buffered - 0.05
+        isComplete && buffered > 0 && position >= buffered
     }
 
     /// Re-schedule everything and put the play head back to the start.
@@ -233,8 +243,24 @@ public final class StreamPlayer: ObservableObject {
         position = 0
     }
 
+    /// Rebase at each observation, including before appending a late sentence.
+    /// Time spent waiting for generation must never count as audio heard.
+    private func updatePosition() {
+        guard isPlaying, let lastTick else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        position = Self.advancedPosition(position, elapsed: now - lastTick, buffered: buffered)
+        self.lastTick = now
+    }
+
+    nonisolated static func advancedPosition(_ position: Double, elapsed: Double,
+                                             buffered: Double) -> Double {
+        min(buffered, position + max(0, elapsed))
+    }
+
     public func pause() {
+        allowsAutomaticPlayback = false
         guard isPlaying else { return }
+        updatePosition()
         node.pause()
         isPlaying = false
         ticker?.invalidate()
@@ -247,7 +273,7 @@ public final class StreamPlayer: ObservableObject {
         isPlaying = false
         ticker?.invalidate()
         ticker = nil
-        startedAt = nil
+        lastTick = nil
         position = 0
         // The node keeps its scheduled buffers otherwise, and the next run
         // would begin by replaying the last one.
@@ -256,5 +282,8 @@ public final class StreamPlayer: ObservableObject {
             format = nil
         }
         rendered.removeAll()
+        buffered = 0
+        isComplete = false
+        allowsAutomaticPlayback = false
     }
 }

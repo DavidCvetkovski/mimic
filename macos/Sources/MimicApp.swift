@@ -3,15 +3,17 @@ import SwiftUI
 @main
 struct MimicApp: App {
     @StateObject private var engine = Engine()
-    @Environment(\.openWindow) private var openWindow
+    @NSApplicationDelegateAdaptor(MimicAppDelegate.self) private var delegate
 
     var body: some Scene {
-        WindowGroup {
+        Window("Mimic", id: "main") {
             ContentView()
                 .environmentObject(engine)
-                .tint(Color(red: 0.486, green: 0.145, blue: 0.161))   // oxblood
-                .task { await launch() }
-                .onDisappear { engine.stop() }
+                .tint(Palette.blood)
+                .task {
+                    delegate.engine = engine
+                    if engine.state == .idle { await engine.connect() }
+                }
         }
         .windowResizability(.contentMinSize)
         .commands {
@@ -25,14 +27,16 @@ struct MimicApp: App {
         }
     }
 
-    private func launch() async {
-        guard case .idle = engine.state else { return }
-        guard let install = Install.find() else {
-            engine.fail(Install.advice)
-            return
-        }
-        await engine.start(python: install.python, projectRoot: install.root)
-    }
+
+}
+
+/// Keep the shared engine alive when the window closes; stop an owned child
+/// only when the application quits.
+@MainActor
+final class MimicAppDelegate: NSObject, NSApplicationDelegate {
+    weak var engine: Engine?
+    func applicationWillTerminate(_ notification: Notification) { engine?.stop() }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
 
 /// Where the Python engine lives.

@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import shutil
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -46,7 +48,10 @@ CACHE_LIMIT_MB = 200
 # shipped in a state where a passage mixing short and long sentences came out
 # in the wrong order, and the cache kept the result — so fixing the splitter
 # was not enough on its own.
-CACHE_VERSION = "3"
+CACHE_VERSION = "4"
+MAX_TEXT_CHARACTERS = 10_000
+MAX_VOICE_CHARACTERS = 64
+MAX_AUDIO_BYTES = 50 * 1024 * 1024
 
 # The reference implementation wants every model file in one flat directory;
 # a Hugging Face snapshot puts the voice-registration encoder in a subfolder.
@@ -56,6 +61,41 @@ REGISTRATION_FILES = ("codec_encoder_fp16.onnx", "codec_encoder_fp16.onnx.data",
 
 class ModelMissing(RuntimeError):
     """Raised when the weights have not been downloaded yet."""
+
+
+def validate_voice_name(name: str) -> str:
+    """Names are portable labels, never filesystem paths."""
+    if (not isinstance(name, str) or not name.strip()
+            or name != name.strip() or len(name) > MAX_VOICE_CHARACTERS
+            or name in {".", ".."} or "/" in name or "\\" in name
+            or any(ord(char) < 32 or ord(char) == 127 for char in name)
+            or len(name.encode("utf-8")) > 255):
+        raise ValueError(
+            "voice name must be 1–64 characters without paths or control characters"
+        )
+    return name
+
+
+def _voice_path(name: str) -> Path:
+    path = VOICES_DIR / validate_voice_name(name)
+    if path.is_symlink():
+        raise ValueError("a voice cannot be a symbolic link")
+    return path
+
+
+def _atomic_write(path: Path, data: bytes):
+    """Readers see the old file or the complete new file, never half a WAV."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=path.parent, prefix=".mimic-", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(data)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def model_ready() -> bool:
@@ -100,10 +140,16 @@ class Engine:
         self._runtime = None
         self._last_used = 0.0
         self._lock = threading.Lock()          # generation is not reentrant
+        self._stop = threading.Event()
+        self._voice_versions: dict[str, int] = {}
+        self._cache_generation = 0
         for directory in (VOICES_DIR, CACHE_DIR):
             directory.mkdir(parents=True, exist_ok=True)
         _discard_stale_cache()
-        threading.Thread(target=self._reaper, daemon=True).start()
+        self._reaper_thread = None
+        if idle_unload:
+            self._reaper_thread = threading.Thread(target=self._reaper, daemon=True)
+            self._reaper_thread.start()
 
     # ---- the model itself ----
 
@@ -112,12 +158,22 @@ class Engine:
         return self._runtime is not None
 
     def _reaper(self):
-        while True:
-            time.sleep(30)
+        while not self._stop.wait(30):
             with self._lock:
                 if (self._runtime is not None and self.idle_unload
-                        and time.time() - self._last_used > self.idle_unload):
+                        and time.monotonic() - self._last_used > self.idle_unload):
                     self._runtime = None
+
+    def unload(self):
+        """Release model memory once the current sentence has finished."""
+        with self._lock:
+            self._runtime = None
+
+    def close(self):
+        self._stop.set()
+        if self._reaper_thread is not None:
+            self._reaper_thread.join(timeout=1)
+        self.unload()
 
     def _ensure(self):
         if self._runtime is not None:
@@ -137,25 +193,32 @@ class Engine:
 
     def voices(self) -> list[dict]:
         """Every registered voice, newest first."""
+        with self._lock:
+            return self._voices()
+
+    def _voices(self) -> list[dict]:
         found = []
         for directory in sorted(VOICES_DIR.iterdir()) if VOICES_DIR.is_dir() else []:
             # meta.json is the vendored runtime's own layout; matching it means
             # a voice registered by either side is readable by both.
             meta = directory / "meta.json"
-            if not meta.is_file():
+            if directory.is_symlink() or meta.is_symlink() or not meta.is_file():
                 continue
             try:
                 with open(meta) as handle:
                     entry = json.load(handle)
             except (OSError, ValueError):
                 continue
+            if not isinstance(entry, dict):
+                continue
             entry["name"] = directory.name
-            entry["has_sample"] = (directory / "reference.wav").is_file()
+            sample = directory / "reference.wav"
+            entry["has_sample"] = sample.is_file() and not sample.is_symlink()
             found.append(entry)
-        return sorted(found, key=lambda v: v.get("created_at", ""), reverse=True)
+        return sorted(found, key=lambda v: str(v.get("created_at") or ""), reverse=True)
 
     def register(self, name: str, wav_bytes: bytes, transcript: str,
-                 overwrite: bool = True) -> dict:
+                 overwrite: bool = False) -> dict:
         """
         Turn a recording into a reusable voice profile.
 
@@ -163,9 +226,22 @@ class Engine:
         it is loaded for this call and dropped again rather than kept resident
         for something you do once per voice.
         """
-        from .vendor.arktts.registration import VoiceRegistration
-
+        directory = _voice_path(name)
+        if not isinstance(transcript, str) or not transcript.strip():
+            raise ValueError("the recording transcript is required")
+        if len(transcript) > MAX_TEXT_CHARACTERS:
+            raise ValueError(f"transcript must be at most {MAX_TEXT_CHARACTERS:,} characters")
+        if not isinstance(wav_bytes, bytes) or not 0 < len(wav_bytes) <= MAX_AUDIO_BYTES:
+            raise ValueError("audio file must be between 1 byte and 50 MiB")
+        if not isinstance(overwrite, bool):
+            raise ValueError("overwrite must be true or false")
         with self._lock:
+            if directory.exists() and not overwrite:
+                raise FileExistsError(f"voice already exists: {name}")
+            if not model_ready():
+                raise ModelMissing("the model has not been downloaded yet")
+            from .vendor.arktts.registration import VoiceRegistration
+
             self._runtime = None                # free the online sessions first
             registration = VoiceRegistration(
                 MODEL_DIR, VOICES_DIR, self.manifest["model_fingerprint"])
@@ -175,51 +251,136 @@ class Engine:
             result = registration.register(
                 data=wav_bytes, filename="reference.wav",
                 text=transcript, name=name, overwrite=overwrite)
-
-        self._forget_cached(name)
-        # Keep the recording itself so it can be played back and so a voice can
-        # be rebuilt if the profile format ever changes.
-        try:
-            with open(VOICES_DIR / name / "reference.wav", "wb") as handle:
-                handle.write(wav_bytes)
-        except OSError:
-            pass
+            self._voice_versions[name] = self._voice_versions.get(name, 0) + 1
+            self._forget_cached(name)
+            # Keep the original recording while the library is still locked.
+            _atomic_write(directory / "reference.wav", wav_bytes)
         return result
 
     def rename(self, old: str, new: str) -> bool:
-        source, target = VOICES_DIR / old, VOICES_DIR / new
-        if not source.is_dir() or target.exists() or Path(new).name != new:
+        try:
+            source, target = _voice_path(old), _voice_path(new)
+        except ValueError:
             return False
-        source.rename(target)
-        self._forget_cached(old)
-        return True
+        with self._lock:
+            if not source.is_dir() or (source / "meta.json").is_symlink():
+                return False
+            if old == new:
+                return True
+            if target.exists():
+                return False
+            try:
+                metadata = json.loads((source / "meta.json").read_text())
+                if not isinstance(metadata, dict):
+                    return False
+                metadata["name"] = new
+                source.rename(target)
+                try:
+                    _atomic_write(target / "meta.json", json.dumps(metadata).encode())
+                except OSError:
+                    target.rename(source)
+                    raise
+            except (OSError, ValueError):
+                return False
+            for name in (old, new):
+                self._voice_versions[name] = self._voice_versions.get(name, 0) + 1
+                self._forget_cached(name)
+            return True
 
     def delete(self, name: str) -> bool:
-        directory = VOICES_DIR / name
-        if not directory.is_dir() or Path(name).name != name:
+        try:
+            directory = _voice_path(name)
+        except ValueError:
             return False
-        shutil.rmtree(directory, ignore_errors=True)
-        self._forget_cached(name)
-        return True
+        with self._lock:
+            if not directory.is_dir():
+                return False
+            shutil.rmtree(directory)
+            self._voice_versions[name] = self._voice_versions.get(name, 0) + 1
+            self._forget_cached(name)
+            return True
 
     def sample(self, name: str) -> bytes | None:
         """The original recording, for playing back in a voice picker."""
-        path = VOICES_DIR / name / "reference.wav"
         try:
-            with open(path, "rb") as handle:
-                return handle.read()
-        except OSError:
+            with self._lock:
+                path = _voice_path(name) / "reference.wav"
+                if path.is_symlink():
+                    return None
+                return path.read_bytes()
+        except (OSError, ValueError):
             return None
 
     # ---- speaking ----
 
-    def _cache_path(self, text: str, voice: str, seed: int) -> Path:
-        digest = hashlib.sha256(f"{voice}|{seed}|{text}".encode()).hexdigest()
-        return CACHE_DIR / f"{voice}-{digest[:24]}.wav"
+    def _cache_path(self, text: str, voice: str, seed: int,
+                    temperature: float = 0.7, top_p: float = 0.9,
+                    top_k: int = 50, max_new_tokens: int = 1024) -> Path:
+        settings = [CACHE_VERSION, voice, seed, text, temperature, top_p, top_k, max_new_tokens]
+        digest = hashlib.sha256(json.dumps(settings, ensure_ascii=False).encode()).hexdigest()
+        return CACHE_DIR / f"{self._cache_prefix(voice)}{digest[:24]}.wav"
+
+    @staticmethod
+    def _cache_prefix(voice: str) -> str:
+        return hashlib.sha256(voice.encode()).hexdigest()[:16] + "-"
 
     def _forget_cached(self, voice: str):
-        for path in CACHE_DIR.glob(f"{voice}-*.wav"):
+        for path in CACHE_DIR.glob(f"{self._cache_prefix(voice)}*.wav"):
             path.unlink(missing_ok=True)
+
+    def clear_cache(self):
+        with self._lock:
+            self._cache_generation += 1
+            for path in CACHE_DIR.glob("*.wav"):
+                path.unlink(missing_ok=True)
+
+    def storage(self) -> dict:
+        sizes = {}
+        for label, directory in (
+            ("model", MODEL_DIR),
+            ("voices", VOICES_DIR),
+            ("cache", CACHE_DIR),
+        ):
+            size = 0
+            for path in directory.rglob("*") if directory.is_dir() else []:
+                try:
+                    if path.is_file() and (label == "model" or not path.is_symlink()):
+                        size += path.stat().st_size
+                except OSError:
+                    continue
+            sizes[label] = size
+        sizes["total"] = sum(sizes.values())
+        return sizes
+
+    def validate_speech(self, text: str, voice: str, seed: int = 42) -> str:
+        if not isinstance(text, str):
+            raise ValueError("text must be a string")
+        if len(text) > MAX_TEXT_CHARACTERS:
+            raise ValueError(f"text must be at most {MAX_TEXT_CHARACTERS:,} characters")
+        text = " ".join(text.split())
+        if not text:
+            raise ValueError("nothing to say")
+        if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 0xFFFFFFFF:
+            raise ValueError("seed must be an integer between 0 and 4294967295")
+        with self._lock:
+            meta = _voice_path(voice) / "meta.json"
+            if meta.is_symlink() or not meta.is_file():
+                raise ValueError(f"no such voice: {voice}")
+        return text
+
+    @staticmethod
+    def _read_cached(path: Path) -> bytes | None:
+        try:
+            if path.is_symlink():
+                return None
+            data = path.read_bytes()
+            if _wav_seconds(data) > 0:
+                os.utime(path, None)
+                return data
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
 
     def estimate(self, text: str) -> float:
         """Roughly how many seconds of speech `text` will make."""
@@ -244,35 +405,57 @@ class Engine:
         start playing is the caller's job — see the `rtf` field, which is what
         makes that decision possible.
         """
+        # This method intentionally returns a generator instead of yielding:
+        # validation runs now, before an HTTP handler commits a 200 response.
+        text = self.validate_speech(text, voice, seed)
+        for label, value, lower, upper in (("temperature", temperature, 0, 5),
+                                            ("top_p", top_p, 0, 1)):
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or not lower < value <= upper):
+                raise ValueError(f"{label} must be greater than {lower} and at most {upper}")
+        for label, value, lower, upper in (("top_k", top_k, 0, 1024),
+                                            ("max_new_tokens", max_new_tokens, 1, 4096)):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not lower <= value <= upper
+            ):
+                raise ValueError(f"{label} must be an integer between {lower} and {upper}")
+        cached = self._cache_path(text, voice, seed, temperature, top_p, top_k, max_new_tokens)
+        with self._lock:
+            data = self._read_cached(cached)
+            if data is None and self._runtime is None and not model_ready():
+                raise ModelMissing("the model has not been downloaded yet")
+            version = self._voice_versions.get(voice, 0)
+            cache_generation = self._cache_generation
+        return self._speak_stream(text, voice, seed, temperature, top_p, top_k,
+                                  max_new_tokens, cached, data, version, cache_generation)
+
+    def _speak_stream(self, text, voice, seed, temperature, top_p, top_k,
+                      max_new_tokens, cached, data, version, cache_generation):
         import numpy as np
 
-        text = " ".join(str(text).split())
-        if not text:
-            raise ValueError("nothing to say")
-        if not (VOICES_DIR / voice / "meta.json").is_file():
-            raise ValueError(f"no such voice: {voice}")
-
-        cached = self._cache_path(text, voice, seed)
-        if cached.is_file():
-            data = cached.read_bytes()
+        if data is not None:
             yield {"done": True, "cached": True, "wav": data,
                    "seconds": _wav_seconds(data), "rtf": 0.0}
             return
 
         parts = split_sentences(text)
-        started = time.time()
+        started = time.monotonic()
         pieces = []
         spoken = 0.0
 
         for index, part in enumerate(parts):
             with self._lock:
+                if version != self._voice_versions.get(voice, 0):
+                    raise ValueError("the voice changed during generation; please try again")
                 runtime = self._ensure()
-                self._last_used = time.time()
+                self._last_used = time.monotonic()
                 audio, _ = runtime.synthesize(
                     text=part, voice=voice, max_new_tokens=max_new_tokens,
                     temperature=temperature, top_p=top_p, top_k=top_k,
-                    seed=seed + index)
-                self._last_used = time.time()
+                    seed=(seed + index) & 0xFFFFFFFF)
+                self._last_used = time.monotonic()
 
             chunk = np.asarray(audio, dtype=np.float32)
             # A breath between sentences, or they run together.
@@ -281,7 +464,7 @@ class Engine:
                     [chunk, np.zeros(int(SAMPLE_RATE * 0.18), dtype=np.float32)])
             pieces.append(chunk)
             spoken += len(chunk) / SAMPLE_RATE
-            elapsed = time.time() - started
+            elapsed = time.monotonic() - started
 
             yield {"done": False, "cached": False, "samples": chunk,
                    "index": index, "of": len(parts),
@@ -292,11 +475,19 @@ class Engine:
 
         audio = np.concatenate(pieces) if pieces else np.zeros(1, dtype=np.float32)
         data = to_wav(audio)
-        cached.write_bytes(data)
-        _prune_cache()
+        with self._lock:
+            if (version == self._voice_versions.get(voice, 0)
+                    and cache_generation == self._cache_generation):
+                # Caching is an optimisation; a full disk must not discard
+                # speech that has already been made successfully.
+                try:
+                    _atomic_write(cached, data)
+                    _prune_cache()
+                except OSError:
+                    pass
         yield {"done": True, "cached": False, "wav": data,
                "seconds": len(audio) / SAMPLE_RATE,
-               "rtf": (time.time() - started) / max(len(audio) / SAMPLE_RATE, 0.01)}
+               "rtf": (time.monotonic() - started) / max(len(audio) / SAMPLE_RATE, 0.01)}
 
     def speak(self, text: str, voice: str, seed: int = 42, temperature: float = 0.7,
               top_p: float = 0.9, top_k: int = 50, max_new_tokens: int = 1024):
@@ -306,29 +497,12 @@ class Engine:
         Deterministic for a given seed, which is what makes caching honest —
         the same words in the same voice really are the same audio.
         """
-        text = " ".join(str(text).split())
-        if not text:
-            raise ValueError("nothing to say")
-        if not (VOICES_DIR / voice / "meta.json").is_file():
-            raise ValueError(f"no such voice: {voice}")
-
-        cached = self._cache_path(text, voice, seed)
-        if cached.is_file():
-            data = cached.read_bytes()
-            return data, _wav_seconds(data), True
-
-        with self._lock:
-            runtime = self._ensure()
-            self._last_used = time.time()
-            audio, _ = runtime.synthesize(
-                text=text, voice=voice, max_new_tokens=max_new_tokens,
-                temperature=temperature, top_p=top_p, top_k=top_k, seed=seed)
-            self._last_used = time.time()
-
-        data = to_wav(audio)
-        cached.write_bytes(data)
-        _prune_cache()
-        return data, len(audio) / SAMPLE_RATE, False
+        # Both APIs must produce the same passage and share honest cache hits.
+        # A one-shot render could silently truncate long text at its token cap.
+        for event in self.speak_stream(text, voice, seed, temperature, top_p,
+                                       top_k, max_new_tokens):
+            if event["done"]:
+                return event["wav"], event["seconds"], event["cached"]
 
 
 def _clause_break(sentence: str, limit: int, overshoot: int = 60) -> int:
@@ -375,6 +549,9 @@ def split_sentences(text: str, limit: int = 110) -> list[str]:
     splitting per clause makes the result sound clipped.
     """
     import re
+
+    if not isinstance(limit, int) or limit < 1:
+        raise ValueError("sentence limit must be a positive integer")
 
     parts, current = [], ""
     for piece in re.split(r"(?<=[.!?;:])\s+", " ".join(str(text).split())):
@@ -458,6 +635,10 @@ def _wav_seconds(data: bytes) -> float:
     import wave
     try:
         with wave.open(io.BytesIO(data), "rb") as handle:
-            return handle.getnframes() / handle.getframerate()
-    except (OSError, wave.Error):
+            frames = handle.getnframes()
+            expected = frames * handle.getnchannels() * handle.getsampwidth()
+            if len(handle.readframes(frames)) != expected:
+                return 0.0
+            return frames / handle.getframerate()
+    except (OSError, EOFError, wave.Error, ZeroDivisionError):
         return 0.0

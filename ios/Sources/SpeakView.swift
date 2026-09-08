@@ -58,7 +58,7 @@ struct SpeakView: View {
                     Button { voices = true } label: {
                         Label("Voices", systemImage: "person.wave.2")
                     }
-                    .disabled(store.isSpeaking)
+                    .disabled(!store.canSpeak)
                 }
                 ToolbarItem(placement: .keyboard) {
                     // Otherwise there is no way to dismiss the keyboard from a
@@ -120,6 +120,8 @@ struct SpeakView: View {
                 .padding(12)
                 .background(Palette.card)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.rule))
+                .accessibilityLabel("What should it say")
+                .accessibilityHint("Your draft is saved automatically. Editing clears the previous audio.")
         }
     }
 
@@ -146,7 +148,7 @@ struct SpeakView: View {
                                 .foregroundStyle(Palette.blood)
                         }
                         .buttonStyle(.plain)
-                        .disabled(writer.isWriting || store.isSpeaking
+                        .disabled(writer.isWriting || !store.canSpeak
                                   || store.writerFraction != nil)
                     }
 
@@ -201,7 +203,8 @@ struct SpeakView: View {
                     HStack(spacing: 8) {
                         ForEach(store.voices, id: \.self) { name in
                             let chosen = store.selected == name
-                            Text(name)
+                            Button { store.selected = name } label: {
+                                Text(name)
                                 .font(.subheadline)
                                 .padding(.horizontal, 15).padding(.vertical, 9)
                                 .background(chosen ? AnyShapeStyle(Palette.blood)
@@ -209,10 +212,10 @@ struct SpeakView: View {
                                             in: Capsule())
                                 .foregroundStyle(chosen ? AnyShapeStyle(.white)
                                                         : AnyShapeStyle(.primary))
-                                .onTapGesture { store.selected = name }
-                                .contextMenu {
-                                    Button("Delete", role: .destructive) { store.delete(name) }
-                                }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(store.isSpeaking)
+                            .accessibilityAddTraits(chosen ? .isSelected : [])
                         }
                     }
                     .padding(.vertical, 2)
@@ -242,6 +245,7 @@ struct SpeakView: View {
                     .foregroundStyle(Palette.blood)
             }
             .disabled(preparing)
+            .accessibilityLabel(preparing ? "Preparing your audio" : "Share this passage")
         }
     }
 
@@ -286,6 +290,10 @@ struct SpeakView: View {
                           || store.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
 
             status
+            if store.needsEngineRecovery {
+                Button("Reload the voice model") { Task { await store.recoverSpeech() } }
+                    .font(.caption)
+            }
         }
     }
 
@@ -302,7 +310,7 @@ struct SpeakView: View {
             // between "in a moment" and a button that does nothing.
             Label(busy, systemImage: "hourglass")
                 .font(.caption).foregroundStyle(Palette.inkMuted)
-        } else if let problem = store.problem {
+        } else if let problem = store.problem ?? store.player.problem {
             Label(problem, systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(Palette.blood)
                 .fixedSize(horizontal: false, vertical: true)
@@ -332,6 +340,7 @@ struct SpeakView: View {
             }
             .buttonStyle(.plain)
             .disabled(store.player.buffered == 0)
+            .accessibilityLabel(store.player.isPlaying ? "Pause audio" : "Play audio")
 
             GeometryReader { geometry in
                 // Once everything is made, the track is the audio — not the

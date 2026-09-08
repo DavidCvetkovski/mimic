@@ -1,74 +1,55 @@
 import AVFoundation
 import Foundation
 
-/// Captures the microphone and hands back a WAV.
-///
-/// Taps the input node directly rather than using `AVAudioRecorder`, for two
-/// reasons: the level meter needs the samples as they arrive, and the engine
-/// wants plain 16-bit PCM rather than whatever compressed format a recorder
-/// would have picked.
 @MainActor
 final class Recorder: ObservableObject {
-
     @Published private(set) var isRecording = false
     @Published private(set) var seconds: Double = 0
-    @Published private(set) var level: Double = 0        // 0...1, for the meter
+    @Published private(set) var level: Double = 0
     @Published private(set) var recorded: Data?
-
-    private let engine = AVAudioEngine()
-    private var samples: [Float] = []
-    private var sampleRate: Double = 48_000
-    private var started = Date()
-    private var ticker: Timer?
-
-    /// Fifteen seconds is the sweet spot; the UI colours the clock inside it.
+    @Published private(set) var reachedLimit = false
     static let idealRange: ClosedRange<Double> = 10...25
-
-    /// What the engine will actually accept, and therefore what the microphone
-    /// is allowed to collect.
-    ///
-    /// The registration code refuses a reference outside 0.5–30s. Nothing
-    /// stopped the recording at thirty, so it was possible to read for two
-    /// minutes and be told afterwards that it was no good.
     static let longest: Double = 29
-    /// Below this there is not enough of a voice to learn anything from.
     static let shortest: Double = 3
 
-    /// Set when the recording stopped because it reached the limit.
-    @Published private(set) var reachedLimit = false
+    private let engine = AVAudioEngine()
+    private var capture: CaptureBuffer?
+    private var sampleRate: Double = 48_000
+    private var ticker: Timer?
 
     func start() throws {
         guard !isRecording else { return }
-        samples.removeAll()
-        recorded = nil
-        reachedLimit = false
-
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        sampleRate = format.sampleRate
-
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
-            guard let channel = buffer.floatChannelData?[0] else { return }
-            let frames = Int(buffer.frameLength)
-            // Only the first channel: the model wants mono, and a stereo mic
-            // would otherwise arrive interleaved into nonsense.
-            let chunk = Array(UnsafeBufferPointer(start: channel, count: frames))
-            var peak: Float = 0
-            for value in chunk { peak = max(peak, abs(value)) }
-            Task { @MainActor [weak self] in
-                self?.samples.append(contentsOf: chunk)
-                self?.level = Double(min(peak * 2.6, 1))
-            }
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw EngineError.server("No microphone is available. Connect one and try again.")
         }
-
-        try engine.start()
+        sampleRate = format.sampleRate
+        let buffer = CaptureBuffer(limit: Int(sampleRate * Self.longest))
+        capture = buffer
+        recorded = nil
+        reachedLimit = false
+        seconds = 0
+        level = 0
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { audio, _ in
+            guard let channel = audio.floatChannelData?[0] else { return }
+            buffer.append(UnsafeBufferPointer(start: channel, count: Int(audio.frameLength)))
+        }
+        do { try engine.start() }
+        catch {
+            input.removeTap(onBus: 0)
+            engine.stop()
+            capture = nil
+            throw error
+        }
         isRecording = true
-        started = Date()
         ticker = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, self.isRecording else { return }
-                self.seconds = Date().timeIntervalSince(self.started)
-                if self.seconds >= Recorder.longest {
+                guard let self, self.isRecording, let buffer = self.capture else { return }
+                let state = buffer.status
+                self.seconds = Double(state.count) / self.sampleRate
+                self.level = Double(min(state.peak * 2.6, 1))
+                if self.seconds >= Self.longest {
                     self.reachedLimit = true
                     self.stop()
                 }
@@ -84,22 +65,51 @@ final class Recorder: ObservableObject {
         ticker = nil
         isRecording = false
         level = 0
-        recorded = Audio.wav(samples, sampleRate: Int(sampleRate))
+        let samples = capture?.finish() ?? []
+        capture = nil
+        seconds = Double(samples.count) / sampleRate
+        recorded = samples.isEmpty ? nil : Audio.wav(samples, sampleRate: Int(sampleRate))
     }
 
     func discard() {
+        stop()
         recorded = nil
         reachedLimit = false
         seconds = 0
     }
 
-
-    /// Ask for the microphone, and report whether we may use it.
     static func requestAccess() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: return true
         case .notDetermined: return await AVCaptureDevice.requestAccess(for: .audio)
         default: return false
         }
+    }
+}
+
+/// The audio callback writes synchronously. Stop takes one final snapshot,
+/// preventing late main-actor callbacks from leaking into the next recording.
+private final class CaptureBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private let limit: Int
+    private var samples: [Float] = []
+    private var peak: Float = 0
+    private var finished = false
+    init(limit: Int) { self.limit = limit }
+    func append(_ chunk: UnsafeBufferPointer<Float>) {
+        lock.lock(); defer { lock.unlock() }
+        guard !finished else { return }
+        let count = min(chunk.count, max(0, limit - samples.count))
+        samples.append(contentsOf: chunk.prefix(count))
+        peak = chunk.prefix(count).reduce(0) { max($0, abs($1)) }
+    }
+    var status: (count: Int, peak: Float) {
+        lock.lock(); defer { lock.unlock() }
+        return (samples.count, peak)
+    }
+    func finish() -> [Float] {
+        lock.lock(); defer { lock.unlock() }
+        finished = true
+        return samples
     }
 }

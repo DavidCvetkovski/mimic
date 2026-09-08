@@ -1,20 +1,11 @@
+import Combine
 import Foundation
 
-/// Talks to the Mimic engine, and owns its lifetime.
-///
-/// The engine is the same `core/server.py` the web app uses. Rather than
-/// reimplement inference in Swift, the app starts it as a child process and
-/// speaks HTTP to it — so there is one engine, one set of behaviours, and a fix
-/// lands everywhere at once. When the app quits, the child goes with it.
+/// Owns an engine it starts, or shares the one already serving the web app.
 @MainActor
 final class Engine: ObservableObject {
-
     enum State: Equatable {
-        case idle
-        case starting
-        case ready
-        case failed(String)
-
+        case idle, starting, ready, failed(String)
         var isReady: Bool { self == .ready }
         var message: String? {
             if case let .failed(reason) = self { return reason }
@@ -24,27 +15,38 @@ final class Engine: ObservableObject {
 
     @Published private(set) var state: State = .idle
     @Published private(set) var voices: [Voice] = []
-    @Published var selected: String?
-
+    @Published var selected: String? {
+        didSet { UserDefaults.standard.set(selected, forKey: "MimicSelectedVoice") }
+    }
+    @Published var activity: String?
+    @Published private(set) var libraryError: String?
+    @Published private(set) var supportsStorage = false
     private var process: Process?
     private let port: Int
     private var base: URL { URL(string: "http://127.0.0.1:\(port)")! }
+    var webURL: URL { base }
 
     init(port: Int = 8455) {
         self.port = port
+        selected = UserDefaults.standard.string(forKey: "MimicSelectedVoice")
     }
 
-    /// Report a problem found before the engine could even be started.
-    func fail(_ reason: String) {
-        state = .failed(reason)
+    func connect() async {
+        guard state != .starting else { return }
+        state = .starting
+        // An existing engine does not require the app to locate its checkout.
+        if await health() {
+            state = .ready
+            await refreshVoices()
+            return
+        }
+        guard let install = Install.find() else {
+            state = .failed(Install.advice)
+            return
+        }
+        await start(python: install.python, projectRoot: install.root)
     }
 
-    // MARK: - Lifetime
-
-    /// Attach to an engine that is already up, or start one.
-    ///
-    /// Attaching first matters during development: the web app and this one use
-    /// the same port, and quietly stealing it would be worse than sharing it.
     func start(python: URL, projectRoot: URL) async {
         state = .starting
         if await health() {
@@ -52,169 +54,173 @@ final class Engine: ObservableObject {
             await refreshVoices()
             return
         }
-
-        let task = Process()
-        task.executableURL = python
-        task.arguments = ["-m", "core.server", "--port", String(port)]
-        task.currentDirectoryURL = projectRoot
-        // Unbuffered, or the log arrives in 4 KB lumps long after the fact.
-        task.environment = ProcessInfo.processInfo.environment.merging(
+        if let process, process.isRunning { process.terminate() }
+        let child = Process()
+        child.executableURL = python
+        child.arguments = ["-m", "core.server", "--port", String(port)]
+        child.currentDirectoryURL = projectRoot
+        child.environment = ProcessInfo.processInfo.environment.merging(
             ["PYTHONUNBUFFERED": "1"]) { _, new in new }
-
         let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        // The handler runs on a background queue, so the buffer it appends to
-        // has to be safe to touch from there as well as from here.
+        child.standardOutput = pipe
+        child.standardError = pipe
         let log = LogBuffer()
         pipe.fileHandleForReading.readabilityHandler = { handle in
-            log.append(String(decoding: handle.availableData, as: UTF8.self))
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil }
+            else { log.append(String(decoding: data, as: UTF8.self)) }
         }
-
-        do {
-            try task.run()
-        } catch {
+        child.terminationHandler = { [weak self] ended in
+            Task { @MainActor [weak self] in
+                guard let self, self.process === ended else { return }
+                self.process = nil
+                self.state = .failed(log.lastLine ?? "The engine stopped. Try reconnecting.")
+            }
+        }
+        do { try child.run() }
+        catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
             state = .failed("Could not start the engine: \(error.localizedDescription)")
             return
         }
-        process = task
-
-        // Give it up to a minute: a first run has to load about a gigabyte.
+        process = child
         for _ in 0..<120 {
+            if Task.isCancelled { stop(); return }
             if await health() {
                 state = .ready
                 await refreshVoices()
                 return
             }
-            if !task.isRunning { break }
+            if !child.isRunning { break }
             try? await Task.sleep(for: .milliseconds(500))
         }
-
-        // Surface what the engine actually said rather than a timeout — nine
-        // times in ten it is "the model has not been downloaded yet".
-        let reason = log.lastLine ?? "the engine did not come up"
-        state = .failed(reason)
+        state = .failed(log.lastLine ?? "The engine did not start. Try reconnecting.")
     }
 
     func stop() {
-        process?.terminate()
+        let child = process
         process = nil
+        if child?.isRunning == true { child?.terminate() }
+        state = .idle
     }
 
     private func health() async -> Bool {
         guard let data = try? await get("/api/health"),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return false }
+        supportsStorage = (json["capabilities"] as? [String])?.contains("storage") == true
         return json["ok"] as? Bool ?? false
     }
 
-    // MARK: - Voices
-
     func refreshVoices() async {
-        guard let data = try? await get("/api/voices"),
-              let payload = try? JSONDecoder().decode(VoiceList.self, from: data)
-        else { return }
-        voices = payload.voices
-        if selected == nil || !voices.contains(where: { $0.name == selected }) {
-            selected = voices.first?.name
+        do {
+            let data = try await get("/api/voices")
+            voices = try JSONDecoder().decode(VoiceList.self, from: data).voices
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            if !voices.contains(where: { $0.name == selected }) { selected = voices.first?.name }
+            libraryError = nil
+        } catch {
+            libraryError = "Could not refresh voices: \(error.localizedDescription)"
         }
     }
 
     func register(name: String, wav: Data, transcript: String) async throws {
-        let body: [String: Any] = [
-            "name": name,
-            "transcript": transcript,
+        _ = try await post("/api/voices", body: [
+            "name": name, "transcript": transcript,
             "wav_hex": wav.map { String(format: "%02x", $0) }.joined(),
-        ]
-        _ = try await post("/api/voices", body: body)
+        ])
         await refreshVoices()
         selected = name
     }
 
     func rename(_ old: String, to new: String) async throws {
-        _ = try await post("/api/voices/\(escape(old))/rename", body: ["name": new])
+        let wasSelected = selected == old
+        var request = URLRequest(url: endpoint(["api", "voices", old, "rename"]))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["name": new])
+        _ = try await send(request)
+        if wasSelected { selected = new }
         await refreshVoices()
-        selected = new
     }
 
     func delete(_ name: String) async throws {
-        var request = URLRequest(url: base.appending(path: "/api/voices/\(escape(name))"))
+        var request = URLRequest(url: endpoint(["api", "voices", name]))
         request.httpMethod = "DELETE"
         _ = try await send(request)
         await refreshVoices()
     }
 
-    func sampleURL(_ name: String) -> URL {
-        base.appending(path: "/api/voices/\(escape(name))/sample.wav")
+    func sample(_ name: String) async throws -> Data {
+        try await send(URLRequest(url: endpoint(["api", "voices", name, "sample.wav"])))
     }
 
-    // MARK: - Speaking
+    func storage() async throws -> StorageUsage {
+        try JSONDecoder().decode(StorageUsage.self, from: await get("/api/storage"))
+    }
 
-    /// Stream the audio a sentence at a time, as the engine makes it.
-    ///
-    /// `onEvent` is called on the main actor for each line the engine sends.
-    /// Cancelling the task stops the request, which stops the engine.
+    func clearCache() async throws {
+        var request = URLRequest(url: endpoint(["api", "cache"]))
+        request.httpMethod = "DELETE"
+        _ = try await send(request)
+    }
+
+    func unloadModel() async throws { _ = try await post("/api/model/unload", body: [:]) }
+
+    /// Require a terminal event: a dropped connection must never become a
+    /// successful, exportable passage. Cancellation is checked before callbacks.
     func speakStream(_ text: String, voice: String,
-                     onEvent: @MainActor (StreamEvent) -> Void) async throws {
-        var request = URLRequest(url: base.appending(path: "/api/speak/stream"))
+                     onEvent: @MainActor (StreamEvent) throws -> Void) async throws {
+        var request = URLRequest(url: endpoint(["api", "speak", "stream"]))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(
-            withJSONObject: ["text": text, "voice": voice])
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["text": text, "voice": voice])
         request.timeoutInterval = 900
-
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw EngineError.server("HTTP \(http.statusCode)")
-        }
-        // Newline-delimited JSON: one object per line, no framing of our own.
-        for try await line in bytes.lines {
-            guard !line.isEmpty, let data = line.data(using: .utf8) else { continue }
-            let event = try JSONDecoder().decode(StreamEvent.self, from: data)
-            await MainActor.run { onEvent(event) }
-            if event.type == "error" {
-                throw EngineError.server(event.message ?? "the engine failed")
+            var data = Data()
+            for try await byte in bytes {
+                data.append(byte)
+                if data.count >= 16_384 { break }
             }
+            try check(response, data)
         }
+        for try await line in bytes.lines {
+            try Task.checkCancellation()
+            guard !line.isEmpty else { continue }
+            let event = try JSONDecoder().decode(StreamEvent.self, from: Data(line.utf8))
+            if event.type == "error" { throw EngineError.server(event.message ?? "The engine failed.") }
+            try onEvent(event)
+            if event.type == "done" { return }
+        }
+        try Task.checkCancellation()
+        throw EngineError.server("The connection ended before the audio was complete. Try speaking again.")
     }
 
-    /// Synthesised audio, and whether it came from the cache.
-    func speak(_ text: String, voice: String) async throws -> (Data, Bool) {
-        var request = URLRequest(url: base.appending(path: "/api/speak"))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(
-            withJSONObject: ["text": text, "voice": voice])
-        // Synthesis runs a little slower than real time, so a long passage can
-        // legitimately take minutes. The default 60s timeout cuts it off.
-        request.timeoutInterval = 900
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try check(response, data)
-        let cached = (response as? HTTPURLResponse)?
-            .value(forHTTPHeaderField: "X-Mimic-Cached") == "1"
-        return (data, cached)
-    }
-
-    // MARK: - HTTP
-
-    private func escape(_ text: String) -> String {
-        text.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? text
+    // Encode each path component exactly once, including %, #, ?, and Unicode.
+    // URL.appending(path:) on an already escaped name turned spaces into %2520.
+    private func endpoint(_ components: [String]) -> URL {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        var url = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+        url.percentEncodedPath = "/" + components.map {
+            $0.addingPercentEncoding(withAllowedCharacters: allowed)!
+        }.joined(separator: "/")
+        return url.url!
     }
 
     private func get(_ path: String) async throws -> Data {
-        var request = URLRequest(url: base.appending(path: path))
+        var request = URLRequest(url: endpoint(path.split(separator: "/").map(String.init)))
         request.timeoutInterval = 5
         return try await send(request)
     }
 
     @discardableResult
     private func post(_ path: String, body: [String: Any]) async throws -> Data {
-        var request = URLRequest(url: base.appending(path: path))
+        var request = URLRequest(url: endpoint(path.split(separator: "/").map(String.init)))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        request.timeoutInterval = 900      // registering a voice loads the encoder
+        request.timeoutInterval = 900
         return try await send(request)
     }
 
@@ -224,38 +230,27 @@ final class Engine: ObservableObject {
         return data
     }
 
-    /// Turn the engine's own error text into the thrown error, so the UI can
-    /// say "no such voice" rather than "the operation could not be completed".
     private func check(_ response: URLResponse, _ data: Data) throws {
-        guard let http = response as? HTTPURLResponse else { return }
+        guard let http = response as? HTTPURLResponse else {
+            throw EngineError.server("The engine sent an invalid response.")
+        }
         guard (200..<300).contains(http.statusCode) else {
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            throw EngineError.server(json?["error"] as? String
-                                     ?? "HTTP \(http.statusCode)")
+            throw EngineError.server(json?["error"] as? String ?? "HTTP \(http.statusCode)")
         }
     }
 }
 
-/// Somewhere for the child process's output to accumulate, readable from the
-/// main actor and writable from the pipe's queue.
 private final class LogBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var text = ""
-
     func append(_ chunk: String) {
-        guard !chunk.isEmpty else { return }
-        lock.lock()
-        defer { lock.unlock() }
-        text += chunk
+        lock.lock(); defer { lock.unlock() }
+        text = String((text + chunk).suffix(32_768))
     }
-
-    /// The last thing it said, which is usually the reason it stopped saying
-    /// anything.
     var lastLine: String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return text.split(separator: "\n")
-            .last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+        lock.lock(); defer { lock.unlock() }
+        return text.split(separator: "\n").last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
             .map { $0.trimmingCharacters(in: .whitespaces) }
     }
 }
@@ -268,7 +263,6 @@ enum EngineError: LocalizedError {
     }
 }
 
-/// One line of the streaming response.
 struct StreamEvent: Decodable {
     let type: String
     let estimate: Double?
@@ -283,19 +277,17 @@ struct StreamEvent: Decodable {
     let elapsed: Double?
     let wav: String?
     let message: String?
-
     enum CodingKeys: String, CodingKey {
-        case type, estimate, sentences, index, of, seconds, rtf, pcm
-        case cached, elapsed, wav, message
+        case type, estimate, sentences, index, of, seconds, rtf, pcm, cached, elapsed, wav, message
         case sampleRate = "sample_rate"
     }
-
-    /// Base64 int16 PCM as the floats the player wants.
-    var samples: [Float] {
-        guard let pcm, let data = Data(base64Encoded: pcm) else { return [] }
+    func decodedSamples() throws -> [Float] {
+        guard let pcm, let data = Data(base64Encoded: pcm), !data.isEmpty, data.count.isMultiple(of: 2) else {
+            throw EngineError.server("The engine sent an unreadable audio chunk. Try speaking again.")
+        }
         return data.withUnsafeBytes { raw in
             (0..<(raw.count / 2)).map {
-                Float(raw.loadUnaligned(fromByteOffset: $0 * 2, as: Int16.self)) / 32_768
+                Float(Int16(littleEndian: raw.loadUnaligned(fromByteOffset: $0 * 2, as: Int16.self))) / 32_768
             }
         }
     }
@@ -305,13 +297,17 @@ struct Voice: Decodable, Identifiable, Hashable {
     let name: String
     let referenceText: String?
     var id: String { name }
-
     enum CodingKeys: String, CodingKey {
         case name
         case referenceText = "reference_text"
     }
 }
 
-private struct VoiceList: Decodable {
-    let voices: [Voice]
+struct StorageUsage: Decodable {
+    let model: Int64
+    let voices: Int64
+    let cache: Int64
+    let total: Int64
 }
+
+private struct VoiceList: Decodable { let voices: [Voice] }

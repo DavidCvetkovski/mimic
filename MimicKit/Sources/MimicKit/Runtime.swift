@@ -128,6 +128,9 @@ public final class Runtime {
                          options: Options = Options(),
                          onFrame: ((Int) -> Bool)? = nil) throws -> [[Int32]] {
         let voice = try voices.load(voiceName)
+        guard voice.codes.allSatisfy({ $0.allSatisfy { $0 >= 0 && $0 < manifest.codebookSize } }) else {
+            throw MimicError.badVoice("the voice contains codes outside this model's range")
+        }
         let prompt = try prompts.build(target: text, voice: voice)
         let promptLength = prompt[0].count
         guard promptLength < manifest.maxSeqLen else {
@@ -256,7 +259,9 @@ public final class Runtime {
     /// Return false from `onChunk` to stop.
     public func synthesizeStream(text: String, voice: String,
                                  options: Options = Options(),
+                                 shouldCancel: (() -> Bool)? = nil,
                                  onChunk: (Chunk) -> Bool) throws {
+        if shouldCancel?() == true { throw CancellationError() }
         // Heard before, and deterministic, so it is the same audio rather than
         // audio like it. Handed back whole: there is nothing to stream when
         // there is nothing left to wait for.
@@ -283,7 +288,14 @@ public final class Runtime {
         // along. The threading, the ordering buffer and the locks bought
         // nothing, so they are not here.
         for (index, part) in parts.enumerated() {
-            var samples = try synthesize(text: part, voice: voice, options: options)
+            if shouldCancel?() == true { throw CancellationError() }
+            let frames = try generate(text: part, voice: voice, options: options,
+                                      onFrame: { _ in shouldCancel?() != true })
+            // Cancellation is checked per frame, before the expensive decode,
+            // so Stop does not keep generating an entire sentence in the background.
+            if shouldCancel?() == true { throw CancellationError() }
+            var samples = try decode(frames: frames)
+            if shouldCancel?() == true { throw CancellationError() }
             // A breath between sentences, or they run together.
             if index < parts.count - 1 { samples.append(contentsOf: silence) }
             seconds += Double(samples.count) / Double(manifest.sampleRate)
