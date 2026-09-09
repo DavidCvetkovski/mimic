@@ -1,0 +1,14 @@
+{
+  "pairingKey": "0101010101010101010101010101010101010101010101010101010101010101",
+  "archive": {
+    "format": "mimic.voice",
+    "version": 1,
+    "name": "Fixture voice",
+    "files": {
+      "meta.json": "eyJuYW1lIjoiRml4dHVyZSB2b2ljZSIsInJlZmVyZW5jZV90ZXh0IjoiQSBzeW50aGV0aWMgaW50ZXJvcGVyYWJpbGl0eSB0ZXN0LiJ9",
+      "codes.npy": "k05VTVBZAQA8AHsnZGVzY3InOiAnPHUyJywgJ2ZvcnRyYW5fb3JkZXInOiBGYWxzZSwgJ3NoYXBlJzogKDIsIDMpLCB9CgEAAgADAAQABQAGAA=="
+    }
+  },
+  "ciphertext": "nfEyqaajE2xOD28UNo0b1+IB4kB+tpEcAzzrQVvPWNpho+EGVLen8OcYlhSIEuS2k2vRKDIe78jqeHmMOYdBK2P2Dcn0fgvkjhoWMsqZYe7omS8uOShgvOm1PZi2nGycqEAYitGj4f6079feCIZTFZBE98ST5hNN4v2gNLr1nqRjrKqqAbyq0zLh6ipJEPsb41Bfbti/mP6rBjGzmMj2kfEzHhVEqRubFLEAvPjbK4gkYJtPXYaoAIxiL3prr3I6ZLPUsixs70Iz/kome2RjcF53X/JFbVlWlKMzfBSvrN2+awkn5c4KxA9RiMI9wGb2tG9ymEf+lLzGggTQVfloZGeFbHrlSiJHHEFRkIHaOr5poNGNmF+DueZK92anLVt4cO9iMoy/c4nTvfiYmNQ427bGC8FZ/kMcxZfltkDJTR1ELfscGjE/nOyDDYEkLmaioD0MQshQeg==",
+  "id": "31c1a2a589133db8003a481fc35d1bfdb9f7c9e479cf6bba28adba3c2fb7eecf"
+}

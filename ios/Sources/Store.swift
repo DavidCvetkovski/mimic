@@ -87,6 +87,8 @@ final class Store: ObservableObject {
     private var activeRun: UUID?
     @Published var problem: String?
 
+    let cloud = CloudSyncController()
+
     private var runtime: Runtime?
     private var task: Task<Void, Never>?
 
@@ -435,6 +437,24 @@ final class Store: ObservableObject {
         await reloadEngine()
         refreshVoices()
         selected = clean
+    }
+
+    func syncVoices() async {
+        guard canSpeak else { return }
+        busy = "Syncing voices…"
+        defer { busy = nil; refreshVoices() }
+        await cloud.sync(export: { [self] in
+            let root = voicesDirectory
+            return try VoiceStore(root: root).names().map {
+                try VoiceTransfer.exportVoice(name: $0, from: root)
+            }
+        }, install: { [self] data in
+            let archive = try CloudVoiceArchive.decode(data)
+            let names = VoiceStore(root: voicesDirectory).names()
+            let taken = names.contains { $0.caseInsensitiveCompare(archive.name) == .orderedSame }
+            let name = taken ? String(archive.name.prefix(42)) + " (synced " + UUID().uuidString.prefix(6) + ")" : archive.name
+            try VoiceTransfer.importVoice(data: data, into: voicesDirectory, name: name)
+        })
     }
 
     // MARK: - What is on the disk

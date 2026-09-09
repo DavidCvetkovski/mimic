@@ -5,6 +5,7 @@ import SwiftUI
 struct SpeakView: View {
     @EnvironmentObject private var store: Store
     @FocusState private var writing: Bool
+    @Environment(\.scenePhase) private var scenePhase
     @State private var recording = false
     @State private var voices = false
     @State private var about = false
@@ -68,6 +69,10 @@ struct SpeakView: View {
                         Button("Done") { writing = false }
                     }
                 }
+            }
+            .task { await store.syncVoices() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await store.syncVoices() } }
             }
             .sheet(isPresented: $recording) {
                 RecordView().environmentObject(store)

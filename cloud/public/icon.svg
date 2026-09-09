@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    Mimic's mark: a waveform and its echo.
+
+    The left half is drawn solid, the right half is the same shape repeated in
+    outline — the copy, a little quieter than the original. That is the whole
+    product in one figure, and it survives being shrunk to a home screen because
+    the silhouette is just bars.
+
+    Full bleed on purpose. iOS masks a home-screen icon to its own squircle, so
+    an icon that rounds its own corners leaves a sliver that gets composited onto
+    white. Let the platform do the rounding.
+  -->
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7f3ea"/>
+      <stop offset="1" stop-color="#ece5d6"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#paper)"/>
+
+  <!-- the original: solid, oxblood -->
+  <g fill="#7c2529">
+    <rect x="96"  y="216" width="26" height="80"  rx="13"/>
+    <rect x="140" y="176" width="26" height="160" rx="13"/>
+    <rect x="184" y="128" width="26" height="256" rx="13"/>
+    <rect x="228" y="192" width="26" height="128" rx="13"/>
+  </g>
+
+  <!-- the echo: same shape, outlined, quieter -->
+  <g fill="none" stroke="#7c2529" stroke-width="9" opacity="0.42">
+    <rect x="286.5" y="220.5" width="17" height="71"  rx="8.5"/>
+    <rect x="330.5" y="180.5" width="17" height="151" rx="8.5"/>
+    <rect x="374.5" y="132.5" width="17" height="247" rx="8.5"/>
+    <rect x="418.5" y="196.5" width="17" height="119" rx="8.5"/>
+  </g>
+</svg>

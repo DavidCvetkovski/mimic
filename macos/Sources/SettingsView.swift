@@ -10,12 +10,19 @@ struct SettingsView: View {
     @State private var clearing = false
 
     var body: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Text("Settings").font(.custom("Iowan Old Style", size: 26))
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }
+            CloudSyncSection(controller: engine.cloud) { await engine.syncVoices() }
+                .disabled(engine.activity != nil)
+            VoiceTransferSection(selected: engine.selected, export: {
+                try await engine.exportSelectedVoice()
+            }, install: { try await engine.importVoice($0) })
+                .disabled(engine.activity != nil || !engine.state.isReady)
             VStack(alignment: .leading, spacing: 10) {
                 Label("On this Mac", systemImage: "lock.shield")
                     .font(.headline)
@@ -80,7 +87,8 @@ struct SettingsView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(24).frame(width: 500, height: 660)
+        .padding(24)
+        }.frame(width: 560, height: 650)
         .background(Palette.background).foregroundStyle(Palette.ink)
         .task { await refresh() }
         .confirmationDialog("Clear cached audio?", isPresented: $clearing, titleVisibility: .visible) {

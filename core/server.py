@@ -192,6 +192,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, {"presets": json.loads((HERE / "presets.json").read_text())})
         if path == "/api/storage":
             return self.reply(200, self.engine.storage())
+        if path.startswith("/api/voices/") and path.endswith("/export"):
+            from .voice_transfer import export_voice
+            with self.engine._lock:
+                data = export_voice(core.VOICES_DIR, _name_from(path))
+            return self.reply(200, data, "application/json")
         if path == "/api/voices":
             return self.reply(200, {"voices": self.engine.voices()})
         name = _voice_route(path, "sample.wav")
@@ -212,6 +217,13 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         payload = self.body()
 
+        if path == "/api/voices/import":
+            from .voice_transfer import import_voice
+            with self.engine._lock:
+                name = import_voice(core.VOICES_DIR, json.dumps(payload).encode())
+                self.engine._runtime = None
+                self.engine._forget_cached(name)
+            return self.reply(200, {"ok": True, "name": name})
         if path == "/api/voices":
             return self.register(payload)
         old = _voice_route(path, "rename")

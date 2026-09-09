@@ -90,7 +90,8 @@ def main():
     build.mkdir(exist_ok=True)
     binary = build / "engine-regression"
     subprocess.run(["swiftc", "-parse-as-library", "-module-cache-path", str(build / "module-cache"),
-                    str(ROOT / "Sources/Engine.swift"), str(ROOT / "Tests/EngineRegression.swift"),
+                    str(ROOT / "Sources/Engine.swift"),
+                    str(ROOT.parent / "MimicKit/Sources/MimicKit/CloudVault.swift"), str(ROOT / "Tests/EngineRegression.swift"),
                     "-o", str(binary)], check=True)
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

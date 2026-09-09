@@ -155,6 +155,46 @@ final class Engine: ObservableObject {
         try await send(URLRequest(url: endpoint(["api", "voices", name, "sample.wav"])))
     }
 
+    func exportSelectedVoice() async throws -> Data {
+        guard let name = selected else { throw CloudSyncError.message("Select a voice first.") }
+        return try await send(URLRequest(url: endpoint(["api", "voices", name, "export"])))
+    }
+    func importVoice(_ data: Data) async throws {
+        guard activity == nil else { throw CloudSyncError.message("Wait for the current task to finish.") }
+        _ = try CloudVoiceArchive.decode(data)
+        activity = "Importing voice"; defer { activity = nil }
+        var request = URLRequest(url: endpoint(["api", "voices", "import"]))
+        request.httpMethod = "POST"; request.httpBody = data
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        _ = try await send(request); await refreshVoices()
+    }
+
+    let cloud = CloudSyncController()
+
+    func syncVoices() async {
+        guard state.isReady, activity == nil else { return }
+        activity = "Syncing voices"
+        defer { activity = nil }
+        await cloud.sync(export: { [self] in
+            await refreshVoices()
+            var result: [Data] = []
+            for voice in voices { result.append(try await send(URLRequest(url: endpoint(["api", "voices", voice.name, "export"])))) }
+            return result
+        }, install: { [self] data in
+            var archive = try CloudVoiceArchive.decode(data)
+            if voices.contains(where: { $0.name.caseInsensitiveCompare(archive.name) == .orderedSame }) {
+                archive.name = String(archive.name.prefix(42)) + " (synced " + UUID().uuidString.prefix(6) + ")"
+            }
+            var request = URLRequest(url: endpoint(["api", "voices", "import"]))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try archive.encoded()
+            _ = try await send(request)
+            await refreshVoices()
+        })
+        await refreshVoices()
+    }
+
     func storage() async throws -> StorageUsage {
         try JSONDecoder().decode(StorageUsage.self, from: await get("/api/storage"))
     }

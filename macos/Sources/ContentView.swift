@@ -72,7 +72,7 @@ struct ContentView: View {
         .sheet(isPresented: $library) { VoicesView().environmentObject(engine) }
         .sheet(isPresented: $settings) { SettingsView().environmentObject(engine) }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active, engine.state.isReady { Task { await engine.refreshVoices() } }
+            if phase == .active, engine.state.isReady { Task { await engine.refreshVoices(); await engine.syncVoices() } }
         }
         .onChange(of: recording) { _, showing in
             if showing { autoPlay = false; player.pause() }

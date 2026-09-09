@@ -22,3 +22,11 @@ ios/Local.xcconfig
 
 # The seeded design canvas — 2 MB of editor, regenerated from design/*.dc.html
 design/*.html
+
+# Hosted sync dependencies and private deployment configuration
+cloud/node_modules/
+cloud/.vercel/
+cloud/.env*
+
+# Device pairing key: never commit or upload
+.mimic-sync-recovery.txt

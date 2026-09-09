@@ -13,6 +13,7 @@ struct MimicApp: App {
                 .task {
                     delegate.engine = engine
                     if engine.state == .idle { await engine.connect() }
+                    await engine.syncVoices()
                 }
         }
         .windowResizability(.contentMinSize)

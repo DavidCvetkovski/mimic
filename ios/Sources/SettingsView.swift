@@ -18,6 +18,20 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    CloudSyncSection(controller: store.cloud) { await store.syncVoices() }
+                        .disabled(!store.canSpeak)
+                }
+                Section {
+                    VoiceTransferSection(selected: store.selected, export: {
+                        guard let name = store.selected else { throw CloudSyncError.message("Select a voice first.") }
+                        return try VoiceTransfer.exportVoice(name: name, from: store.voicesDirectory)
+                    }, install: { data in
+                        guard store.canSpeak else { throw CloudSyncError.message("Wait for the current task to finish.") }
+                        try VoiceTransfer.importVoice(data: data, into: store.voicesDirectory)
+                        store.refreshVoices()
+                    }).disabled(!store.canSpeak)
+                }
                 Section("On this phone") {
                     row("The voice model", bytes: sizes.model)
                     row("Voices", bytes: sizes.voices)

@@ -23,9 +23,10 @@ voice — in a browser, in a Mac app, and on an iPhone with no network at all.
 </tr>
 </table>
 
-Nothing is uploaded. The model, the recordings and the synthesis all stay on the
-machine — the phone included, where the whole engine is reimplemented in Swift
-and runs with aeroplane mode on.
+Speech generation stays on your device — including iPhone, where the engine
+is implemented in Swift and works in aeroplane mode. Optional encrypted voice
+sync can back up voice profiles and reference recordings through Vercel. It stays
+off until you pair a device. See [cloud setup and privacy](cloud/README.md).
 
 ## What it is
 

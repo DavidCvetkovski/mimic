@@ -24,6 +24,7 @@ swiftc -O -parse-as-library -target "$TARGET" \
     -module-cache-path "$HERE/build/module-cache" \
     -o "$APP/Contents/MacOS/Mimic" \
     "$HERE"/Sources/*.swift \
+    "$KIT/CloudVault.swift" \
     "$KIT/StreamPlayer.swift" \
     "$KIT/Palette.swift" \
     "$KIT/Preset.swift" \
