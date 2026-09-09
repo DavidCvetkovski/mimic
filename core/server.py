@@ -134,7 +134,15 @@ class Handler(BaseHTTPRequestHandler):
                 if (parsed.scheme not in {"http", "https"}
                         or parsed.netloc.lower() != self.headers.get("Host", "").lower()):
                     raise RequestError("requests must come from this Mimic server", 403)
-            if self.headers.get("Sec-Fetch-Site") == "cross-site":
+            # A link from the hosted vault may open the studio document. It
+            # must not grant cross-site access to APIs, files, or mutations.
+            studio_navigation = (
+                self.command == "GET"
+                and self.path.split("?")[0] in {"/", "/index.html"}
+                and self.headers.get("Sec-Fetch-Mode") == "navigate"
+                and self.headers.get("Sec-Fetch-Dest") == "document"
+            )
+            if self.headers.get("Sec-Fetch-Site") == "cross-site" and not studio_navigation:
                 raise RequestError("cross-site requests are not allowed", 403)
             action()
         except RequestError as exc:
