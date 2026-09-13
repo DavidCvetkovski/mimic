@@ -61,11 +61,24 @@ public struct CloudVault: Sendable {
     public static let endpoint = URL(string: "https://mimic.lyricstats.dev")!
     private let encryption: SymmetricKey
     private let token: String
+    private let authorization: String
+    public let recoveryKey: String
+    public let journalSuffix: String
     private let base: URL
     private static let chunkSize = 512 * 1024
 
     public init(pairingKey: String, base: URL = Self.endpoint) throws {
-        let text = pairingKey.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let input = pairingKey.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let parts = input.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        let isDevice = parts.count == 4 && parts[0] == "mimic2"
+        if parts.count != 1 && !isDevice { throw CloudSyncError.message("Copy the complete device pairing code from the Mimic website.") }
+        let text = isDevice ? parts[1] : input
+        if isDevice {
+            guard parts[2].count == 32, parts[3].count == 64,
+                  (parts[2] + parts[3]).allSatisfy({ $0.isASCII && $0.isHexDigit }) else {
+                throw CloudSyncError.message("This device pairing code is incomplete.")
+            }
+        }
         guard text.count == 64, text.allSatisfy({ $0.isASCII && $0.isHexDigit }) else {
             throw CloudSyncError.message("Use the complete 64-character pairing key.")
         }
@@ -78,6 +91,9 @@ public struct CloudVault: Sendable {
         }
         encryption = derive("encryption")
         token = derive("authentication").withUnsafeBytes { Data($0).hex }
+        authorization = isDevice ? "Device \(parts[2]).\(parts[3])" : "Bearer \(token)"
+        recoveryKey = text
+        journalSuffix = isDevice ? "." + parts[2] : ""
         self.base = base
     }
     public func objectID(_ data: Data) throws -> String {
@@ -105,7 +121,7 @@ public struct CloudVault: Sendable {
         var url = URLComponents(url: base.appending(path: "api/sync"), resolvingAgainstBaseURL: false)!
         url.queryItems = [URLQueryItem(name: "action", value: action)] + query.map { URLQueryItem(name: $0.key, value: $0.value) }
         var request = URLRequest(url: url.url!); request.timeoutInterval = 60
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
         if let body {
             request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -134,14 +150,17 @@ public struct CloudVault: Sendable {
         let id = try objectID(data), encrypted = try encrypt(data)
         let upload = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let parts = (encrypted.count + Self.chunkSize - 1) / Self.chunkSize
+        let manifest: [String: Any] = ["id": id, "upload": upload, "parts": parts, "bytes": encrypted.count,
+            "label": try AES.GCM.seal(Data(CloudVoiceArchive.decode(data).name.utf8), using: encryption,
+                authenticating: Data("mimic.name.v1".utf8)).combined!.base64EncodedString()]
+        let started = try await request("begin", body: manifest)
+        if started["complete"] as? Bool == true { return id }
         for part in 0..<parts {
             let start = part * Self.chunkSize, end = min(start + Self.chunkSize, encrypted.count)
             _ = try await request("chunk", body: ["id": id, "upload": upload, "part": part,
                                                   "data": encrypted[start..<end].base64EncodedString()])
         }
-        _ = try await request("commit", body: ["id": id, "upload": upload, "parts": parts, "bytes": encrypted.count,
-            "label": try AES.GCM.seal(Data(CloudVoiceArchive.decode(data).name.utf8), using: encryption,
-                authenticating: Data("mimic.name.v1".utf8)).combined!.base64EncodedString()])
+        _ = try await request("commit", body: manifest)
         return id
     }
     public func download(_ id: String) async throws -> Data {
@@ -202,6 +221,10 @@ public final class CloudSyncController: ObservableObject {
             vault = next; connected = true; status = "Connected. Sync is ready."
         } catch { status = error.localizedDescription }
     }
+    public func recoveryDocument() throws -> VoiceArchiveDocument {
+        guard let vault else { throw CloudSyncError.message("Connect a library first.") }
+        return VoiceArchiveDocument(data: Data(("Mimic recovery key\n\n" + vault.recoveryKey + "\n\nKeep this key private. Sign in at https://mimic.lyricstats.dev to unlock your encrypted voices.\n").utf8))
+    }
     public func disconnect() {
         guard !syncing else { return }
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
@@ -216,6 +239,7 @@ public final class CloudSyncController: ObservableObject {
         guard let vault, !syncing else { return }; syncing = true; status = "Syncing encrypted voices…"
         defer { syncing = false }
         do {
+            let journalKey = self.journalKey + vault.journalSuffix
             var seen = Set(UserDefaults.standard.stringArray(forKey: journalKey) ?? [])
             let remote = Set(try await vault.list()), local = try await export()
             var localIDs = Set<String>()
@@ -245,29 +269,37 @@ public struct CloudSyncSection: View {
     @ObservedObject private var controller: CloudSyncController
     private let sync: () async -> Void
     @State private var key = ""
+    @State private var savingRecovery = false
+    @State private var recovery = VoiceArchiveDocument(data: Data())
     public init(controller: CloudSyncController, sync: @escaping () async -> Void) {
         self.controller = controller; self.sync = sync
     }
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Encrypted voice sync", systemImage: "lock.icloud").font(.headline)
-            Text("Connect your devices with the same pairing key. Voices are encrypted before upload to mimic.lyricstats.dev. New voices sync when the app opens; deletions stay local.")
+            Text("Sign in on the Mimic website, unlock your library, and create a pairing code for this device. Voices are encrypted before upload. New voices sync when the app opens; deletions stay local.")
                 .font(.caption).fixedSize(horizontal: false, vertical: true)
+            Link("Open account & device pairing", destination: CloudVault.endpoint)
             if controller.connected {
+                Button("Save recovery key…") {
+                    if let document = try? controller.recoveryDocument() { recovery = document; savingRecovery = true }
+                }
                 HStack {
                     Button("Sync now") { Task { await sync() } }
                     Button("Disconnect") { controller.disconnect() }
                 }
             } else {
-                SecureField("64-character pairing key", text: $key)
+                SecureField("Device pairing code or original key", text: $key)
                     .textContentType(.password)
                 Button("Connect and sync") {
                     Task { await controller.connect(key); if controller.connected { key = ""; await sync() } }
-                }.disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).count != 64)
+                }.disabled((try? CloudVault(pairingKey: key)) == nil)
             }
             if controller.syncing { ProgressView().controlSize(.small) }
             if !controller.status.isEmpty { Text(controller.status).font(.caption).fixedSize(horizontal: false, vertical: true) }
         }.disabled(controller.syncing)
+        .fileExporter(isPresented: $savingRecovery, document: recovery, contentType: .plainText,
+                      defaultFilename: "Mimic Recovery Key.txt") { _ in }
     }
 }
 

@@ -18,6 +18,18 @@ final class CloudSyncTests: XCTestCase {
         XCTAssertEqual(try vault.objectID(archive), id)
         XCTAssertEqual(try vault.objectID(decoded.encoded()), id)
     }
+    func testDevicePairingPreservesEncryptionAndSeparatesTheSyncJournal() throws {
+        let (_, archive, ciphertext, id) = try fixture()
+        let key = String(repeating: "01", count: 32)
+        let code = "mimic2." + key + "." + String(repeating: "ab", count: 16) + "." + String(repeating: "cd", count: 32)
+        let device = try CloudVault(pairingKey: code)
+        XCTAssertEqual(device.recoveryKey, key)
+        XCTAssertEqual(device.journalSuffix, "." + String(repeating: "ab", count: 16))
+        XCTAssertEqual(try device.objectID(archive), id)
+        XCTAssertNoThrow(try device.decrypt(ciphertext))
+        XCTAssertThrowsError(try CloudVault(pairingKey: code + ".extra"))
+        XCTAssertThrowsError(try CloudVault(pairingKey: "mimic2." + key + ".short.secret"))
+    }
     func testTamperingAndWrongKeysFailClosed() throws {
         let (vault, archive, ciphertext, _) = try fixture()
         var altered = ciphertext; altered[altered.count - 1] ^= 1

@@ -61,13 +61,16 @@ export async function decryptLabel(label,keys) {
   return new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes.slice(0,12),additionalData:utf8.encode('mimic.name.v1')},key,bytes.slice(12)));
 }
 export async function call(keys,action,{method='GET',body,signal,base=''}={}) {
-  const response=await fetch(base+'/api/sync?action='+action,{method,signal,headers:{Authorization:'Bearer '+keys.token,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
+  const response=await fetch(base+'/api/sync?action='+action,{method,signal,headers:{Authorization:keys.getAuthorization ? await keys.getAuthorization() : 'Bearer '+keys.token,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
   const data=await response.json(); if(!response.ok)throw new Error(data.error||'Sync could not finish. Please try again.');return data;
 }
 export async function upload(archive,keys,options={}) {
   const id=await objectID(archive,keys), uploadID=hex(crypto.getRandomValues(new Uint8Array(16))), encrypted=await seal(archive,keys), count=Math.ceil(encrypted.length/CHUNK_BYTES);
+  const manifest={id,upload:uploadID,parts:count,bytes:encrypted.length,label:await encryptLabel(archive.name,keys)};
+  const started=await call(keys,'begin',{...options,method:'POST',body:manifest});
+  if(started.complete)return id;
   for(let part=0;part<count;part++)await call(keys,'chunk',{...options,method:'POST',body:{id,upload:uploadID,part,data:base64(encrypted.slice(part*CHUNK_BYTES,(part+1)*CHUNK_BYTES))}});
-  await call(keys,'commit',{...options,method:'POST',body:{id,upload:uploadID,parts:count,bytes:encrypted.length,label:await encryptLabel(archive.name,keys)}});return id;
+  await call(keys,'commit',{...options,method:'POST',body:manifest});return id;
 }
 export async function download(id,keys,options={}) {
   const manifest=await call(keys,'manifest&id='+id,options);
@@ -76,4 +79,14 @@ export async function download(id,keys,options={}) {
   for(let part=0;part<manifest.parts;part++) {const data=await call(keys,'chunk&id='+id+'&upload='+manifest.upload+'&part='+part,options);const bytes=unbase64(data.data);if(offset+bytes.length>output.length)throw new Error('Invalid cloud voice length.');output.set(bytes,offset);offset+=bytes.length;}
   if(offset!==output.length)throw new Error('The cloud voice is incomplete.');
   const archive=await open(output,keys);if(await objectID(archive,keys)!==id)throw new Error('The cloud voice identity does not match.');return archive;
+}
+
+export function generateRecoveryKey() { return hex(crypto.getRandomValues(new Uint8Array(32))); }
+export async function recoveryVerifier(keys) {
+  return hex(await crypto.subtle.digest('SHA-256',unhex(keys.token)));
+}
+export function devicePairingCode(root, device) {
+  unhex(root);
+  if(!/^[a-f0-9]{32}$/.test(device.id)||!/^[a-f0-9]{64}$/.test(device.secret))throw new Error('Invalid device credential.');
+  return `mimic2.${root}.${device.id}.${device.secret}`;
 }
