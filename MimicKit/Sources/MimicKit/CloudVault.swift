@@ -334,12 +334,12 @@ public struct VoiceTransferSection: View {
     }
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Move a voice").font(.headline)
-            Text("Import a .mimicvoice file, or export the voice selected in Speak. Exported files include the reference recording; share them privately.")
+            Text("Transfer voices").font(.headline)
+            Text("Import a voice file, or export your selected voice to use on another device.")
                 .font(.caption).fixedSize(horizontal: false, vertical: true)
-            HStack {
+            VStack(alignment: .leading, spacing: 12) {
                 Button("Import voice…") { importing = true }
-                Button("Export selected voice…") {
+                Button("Export voice…") {
                     working = true
                     Task {
                         defer { working = false }
@@ -348,6 +348,16 @@ public struct VoiceTransferSection: View {
                     }
                 }.disabled(selected == nil)
             }
+            .buttonStyle(.borderless)
+            .fixedSize(horizontal: false, vertical: true)
+            if let selected {
+                Text("Selected: \(selected)")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Voice files include the reference recording. Share them privately.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if working { ProgressView().controlSize(.small) }
             if !status.isEmpty { Text(status).font(.caption) }
         }.disabled(working)

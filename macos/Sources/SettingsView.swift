@@ -85,6 +85,8 @@ struct SettingsView: View {
                 Label(notice, systemImage: "checkmark.circle")
                     .font(.callout).foregroundStyle(Palette.inkMuted)
             }
+            Text("Made by David Cvetkovski")
+                .font(.caption).foregroundStyle(Palette.inkMuted)
             Spacer(minLength: 0)
         }
         .padding(24)

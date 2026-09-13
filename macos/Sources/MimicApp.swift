@@ -19,6 +19,13 @@ struct MimicApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) {}                      // no New Window
+            CommandGroup(replacing: .appInfo) {
+                Button("About Mimic") {
+                    NSApp.orderFrontStandardAboutPanel(options: [
+                        .credits: NSAttributedString(string: "Made by David Cvetkovski")
+                    ])
+                }
+            }
             CommandGroup(after: .appInfo) {
                 Button("Open the Web App") {
                     NSWorkspace.shared.open(URL(string: "http://127.0.0.1:8455")!)

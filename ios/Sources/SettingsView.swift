@@ -83,6 +83,11 @@ struct SettingsView: View {
                          + "say. Optional — the passages and your own typing work without it.")
                 }
 
+                Section {
+                    Text("Made by David Cvetkovski")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 Section("Made with") {
                     Credit(name: "Audio8 TTS 0.6B", role: "the voice",
                            licence: "Apache 2.0",
