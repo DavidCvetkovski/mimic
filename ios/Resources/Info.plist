@@ -27,6 +27,8 @@
     <string>UIInterfaceOrientationLandscapeLeft</string>
     <string>UIInterfaceOrientationLandscapeRight</string>
   </array>
+  <!-- The only encryption is the system's own HTTPS, for the model download. -->
+  <key>ITSAppUsesNonExemptEncryption</key> <false/>
   <!-- Shown when a passage is saved to the camera roll as a video. -->
   <key>NSPhotoLibraryAddUsageDescription</key>
   <string>Mimic can save a passage as a video — a black picture with your voice on it — so it can be sent anywhere that takes video.</string>

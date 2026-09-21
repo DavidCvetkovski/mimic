@@ -18,9 +18,11 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    CloudSyncSection(controller: store.cloud) { await store.syncVoices() }
-                        .disabled(!store.canSpeak)
+                if Store.offersSync {
+                    Section {
+                        CloudSyncSection(controller: store.cloud) { await store.syncVoices() }
+                            .disabled(!store.canSpeak)
+                    }
                 }
                 Section {
                     VoiceTransferSection(selected: store.selected, export: {

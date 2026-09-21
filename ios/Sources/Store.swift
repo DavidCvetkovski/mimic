@@ -89,6 +89,12 @@ final class Store: ObservableObject {
 
     let cloud = CloudSyncController()
 
+    /// Sync pairs the phone with an account on the Mimic website, and those
+    /// accounts are not open yet. Until they are, the phone does not offer it:
+    /// a setting that sends people to a sign-up that does not exist is worse
+    /// than no setting at all.
+    static let offersSync = false
+
     private var runtime: Runtime?
     private var task: Task<Void, Never>?
 
@@ -440,7 +446,7 @@ final class Store: ObservableObject {
     }
 
     func syncVoices() async {
-        guard canSpeak else { return }
+        guard Self.offersSync, canSpeak else { return }
         busy = "Syncing voices…"
         defer { busy = nil; refreshVoices() }
         await cloud.sync(export: { [self] in

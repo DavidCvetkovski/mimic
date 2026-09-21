@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    The model and its cache peak at about 1.5 GB. That is inside the default
+    ceiling on a new phone and outside it on an older one, where iOS would end
+    the app mid-sentence. This asks for the higher ceiling wherever there is one.
+  -->
+  <key>com.apple.developer.kernel.increased-memory-limit</key> <true/>
+</dict>
+</plist>
