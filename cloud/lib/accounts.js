@@ -5,7 +5,7 @@ import {readJSON,writeJSON,updateJSON,HttpError} from './storage.js';
 export const digest = value => createHash('sha256').update(value).digest('hex');
 export const accountPath = id => `accounts/${id}/account.json`;
 export const devicePath = id => `devices/${id}.json`;
-export const origins = () => ['https://mimic.lyricstats.dev','https://mimic-umber.vercel.app',
+export const origins = () => ['https://mimic.davidcvetkovski.com','https://mimic-umber.vercel.app',
   ...(process.env.VERCEL_URL ? ['https://'+process.env.VERCEL_URL] : [])];
 export function checkOrigin(req) {
   if(req.headers.origin && !origins().includes(req.headers.origin)) throw new HttpError(403,'Use the Mimic website.');

@@ -6,7 +6,7 @@ namespace. Clients never select a user ID or storage prefix.
 
 ## User flow
 
-1. Sign in at https://mimic.lyricstats.dev and create your encrypted library.
+1. Sign in at https://mimic.davidcvetkovski.com and create your encrypted library.
 2. Generate and save the recovery file before confirming library creation.
 3. Unlock the library with the recovery key on another browser.
 4. In Connected devices, name an iPhone or Mac and create its pairing code.
@@ -48,7 +48,7 @@ Production environment variables:
 - `CLERK_PUBLISHABLE_KEY` (or `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`): matching public key.
 - `SYNC_AUTH_SHA256`: keep the existing value to retain original-library access.
 
-Configure the Clerk production domain as `mimic.lyricstats.dev`, complete the
+Configure the Clerk production domain as `mimic.davidcvetkovski.com`, complete the
 provider's DNS setup, enable email verification, and disable any social login
 that has not been configured for production. Allowed origins and Clerk script
 hosts are explicit in `lib/accounts.js`, `public/cloud.js`, and `vercel.json`.

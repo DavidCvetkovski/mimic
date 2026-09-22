@@ -31,7 +31,7 @@ $('#lock').onclick=()=>{lock();message('Library locked. Encryption keys have bee
 $('#refresh').onclick=()=>operate(refresh);
 $('#upload').onchange=()=>operate(async()=>{const file=$('#upload').files[0],current=keys,run=generation;if(!file||!current)return;if(file.size>32*1048576)throw new Error('Choose a voice smaller than 32 MiB.');const archive=validateArchive(JSON.parse(await file.text()));if(run!==generation)return;controller=new AbortController();message('Encrypting and uploading…');try{await upload(archive,current,{signal:controller.signal});if(run!==generation)return;await refresh();if(clerk?.user)await accountStatus();message(`“${archive.name}” is ready to sync.`);}finally{$('#upload').value='';}});
 $('#generate-key').onclick=()=>{root=generateRecoveryKey();$('#new-key').value=root;$('#new-key-panel').hidden=false;$('#key-saved').checked=false;$('#create-vault').disabled=true;};
-$('#save-key').onclick=()=>{if(root)saveFile('Mimic recovery key\n\n'+root+'\n\nSign in at https://mimic.lyricstats.dev and use this key to unlock your encrypted library. Keep it private.\n','Mimic Recovery Key.txt','text/plain');};
+$('#save-key').onclick=()=>{if(root)saveFile('Mimic recovery key\n\n'+root+'\n\nSign in at https://mimic.davidcvetkovski.com and use this key to unlock your encrypted library. Keep it private.\n','Mimic Recovery Key.txt','text/plain');};
 $('#key-saved').onchange=()=>{$('#create-vault').disabled=!$('#key-saved').checked;};
 $('#create-vault').onclick=()=>operate(async()=>{const run=generation;if(!root||!$('#key-saved').checked)return;const next=await credentials(root);await accountCall('create',{verifier:await recoveryVerifier(next)});if(run!==generation)return;next.getAuthorization=authorization;$('#new-key').value='';$('#new-key-panel').hidden=true;await showVault(next);});
 $('#unlock-library').onsubmit=event=>{event.preventDefault();operate(async()=>{const run=generation;const value=$('#recovery').value.trim(),next=await credentials(value);if(await recoveryVerifier(next)!==account.verifier)throw new Error('That recovery key belongs to a different library.');if(run!==generation)return;root=value;$('#recovery').value='';next.getAuthorization=authorization;await showVault(next);});};
@@ -46,7 +46,7 @@ async function start(){
   const config=await (await fetch('/api/account?action=config')).json(),pk=config.publishableKey;
   if(!pk){$('#auth-status').textContent='Email accounts are being configured. Your original private library remains available below.';return;}
   const host=atob(pk.split('_').slice(2).join('_')).replace(/\$$/,'');
-  if(!/^[a-z0-9.-]+$/.test(host)||(!host.endsWith('.clerk.accounts.dev')&&host!=='clerk.mimic.lyricstats.dev'))throw new Error('Unexpected authentication domain.');
+  if(!/^[a-z0-9.-]+$/.test(host)||(!host.endsWith('.clerk.accounts.dev')&&host!=='clerk.mimic.davidcvetkovski.com'))throw new Error('Unexpected authentication domain.');
   const script=document.createElement('script');script.src=`https://${host}/npm/@clerk/clerk-js@5/dist/clerk.browser.js`;script.crossOrigin='anonymous';script.dataset.clerkPublishableKey=pk;
   await new Promise((resolve,reject)=>{script.onload=resolve;script.onerror=()=>reject(new Error('Sign-in could not load. Refresh to retry.'));document.head.append(script);});
   clerk=window.Clerk;await clerk.load();$('#email-signin').disabled=false;$('#email-signup').disabled=false;$('#auth-status').textContent='Email sign-in is managed by Clerk. Your recovery key unlocks the encrypted voices.';

@@ -58,7 +58,7 @@ public struct CloudVoiceArchive: Codable, Sendable {
 /// The root key never leaves the device. Authentication and AES keys use
 /// separate HKDF contexts; the server sees only an authentication derivative.
 public struct CloudVault: Sendable {
-    public static let endpoint = URL(string: "https://mimic.lyricstats.dev")!
+    public static let endpoint = URL(string: "https://mimic.davidcvetkovski.com")!
     private let encryption: SymmetricKey
     private let token: String
     private let authorization: String
@@ -223,7 +223,7 @@ public final class CloudSyncController: ObservableObject {
     }
     public func recoveryDocument() throws -> VoiceArchiveDocument {
         guard let vault else { throw CloudSyncError.message("Connect a library first.") }
-        return VoiceArchiveDocument(data: Data(("Mimic recovery key\n\n" + vault.recoveryKey + "\n\nKeep this key private. Sign in at https://mimic.lyricstats.dev to unlock your encrypted voices.\n").utf8))
+        return VoiceArchiveDocument(data: Data(("Mimic recovery key\n\n" + vault.recoveryKey + "\n\nKeep this key private. Sign in at https://mimic.davidcvetkovski.com to unlock your encrypted voices.\n").utf8))
     }
     public func disconnect() {
         guard !syncing else { return }
