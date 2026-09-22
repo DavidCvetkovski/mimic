@@ -43,7 +43,13 @@ struct SpeakView: View {
             // As a safe-area inset rather than another row in the stack: this
             // keeps the bar clear of the home indicator and lets the scroll
             // view above it know how much room it actually has.
-            .safeAreaInset(edge: .bottom, spacing: 0) { controls }
+            //
+            // Not while typing, though. The keyboard is part of the safe area,
+            // so the bar rode up on top of it and covered the passage being
+            // written. Done, or dragging the keyboard away, brings it back.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !writing { controls }
+            }
             .background(Palette.background)
             .navigationTitle("")
             .toolbar {
@@ -119,6 +125,9 @@ struct SpeakView: View {
             // passage grew the field until everything else was off the screen.
             TextEditor(text: $store.text)
                 .font(.custom("Iowan Old Style", size: 18, relativeTo: .body))
+                // Stated rather than inherited. Left to the default, typing on
+                // a phone in dark mode came out black on the dark card.
+                .foregroundStyle(Palette.ink)
                 .focused($writing)
                 .scrollContentBackground(.hidden)
                 .frame(height: 210)
