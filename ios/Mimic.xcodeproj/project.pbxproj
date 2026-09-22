@@ -113,6 +113,7 @@
 				4E57AE888889001C06A4F7E8 /* Sources */,
 				69BE8A4D8E4D9DA4E7DB3928 /* Frameworks */,
 				D6C9E8A172005E68A1DD674F /* Resources */,
+				C0FF16A11E5100DEADBEEF10 /* Drop the empty ONNX Runtime framework */,
 			);
 			buildRules = (
 			);
@@ -169,6 +170,29 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		C0FF16A11E5100DEADBEEF10 /* Drop the empty ONNX Runtime framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Drop the empty ONNX Runtime framework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# ONNX Runtime is a static library, so its code is already linked into the\n# app. Xcode copies the framework folder in anyway, swaps the library for an\n# empty stub built for this deployment target, and keeps ONNX Runtime's own\n# Info.plist, which says iOS 15.1. App Store Connect rejects that pair\n# (ITMS-90208). Nothing loads the stub, so it goes - unless a future\n# ONNX Runtime is dynamic and the app really does load it.\nstub=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/onnxruntime.framework\"\n[ -d \"$stub\" ] || exit 0\nif xcrun otool -L \"${TARGET_BUILD_DIR}/${EXECUTABLE_PATH}\" | grep -q \"onnxruntime.framework\"; then\n  echo \"error: ${EXECUTABLE_NAME} loads onnxruntime.framework, so it cannot be removed\" >&2\n  exit 1\nfi\nrm -rf \"$stub\"\necho \"Removed the empty onnxruntime.framework stub\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		4E57AE888889001C06A4F7E8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -198,7 +222,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Resources/Mimic.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -257,7 +281,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Resources/Mimic.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Resources/Info.plist;
