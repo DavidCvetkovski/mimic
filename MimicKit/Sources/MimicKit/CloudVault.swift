@@ -319,10 +319,17 @@ public struct VoiceArchiveDocument: FileDocument {
     }
 }
 
+/// What somebody confirms before a voice is recorded or imported. One sentence
+/// in one place, so that both ask the same thing.
+public enum VoiceConsent {
+    public static let statement = "This is my own voice, or I have the speaker's permission."
+}
+
 public struct VoiceTransferSection: View {
     private let selected: String?
     private let export: () async throws -> Data
     private let install: (Data) async throws -> Void
+    @State private var confirmingImport = false
     @State private var importing = false
     @State private var exporting = false
     @State private var working = false
@@ -338,7 +345,7 @@ public struct VoiceTransferSection: View {
             Text("Import a voice file, or export your selected voice to use on another device.")
                 .font(.caption).fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 12) {
-                Button("Import voice…") { importing = true }
+                Button("Import voice…") { confirmingImport = true }
                 Button("Export voice…") {
                     working = true
                     Task {
@@ -361,6 +368,13 @@ public struct VoiceTransferSection: View {
             if working { ProgressView().controlSize(.small) }
             if !status.isEmpty { Text(status).font(.caption) }
         }.disabled(working)
+        // Asked before the file picker opens, the same thing recording asks.
+        .alert("Import a voice", isPresented: $confirmingImport) {
+            Button("Cancel", role: .cancel) {}
+            Button("Confirm") { importing = true }
+        } message: {
+            Text(VoiceConsent.statement)
+        }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.data]) { result in
             guard case let .success(url) = result else { return }
             working = true

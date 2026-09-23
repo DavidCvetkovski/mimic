@@ -92,7 +92,8 @@ struct VoicesView: View {
                 .font(.custom("Iowan Old Style", size: 22, relativeTo: .title3))
             Text("Read a short paragraph aloud — about fifteen seconds — and this "
                  + "phone will learn how you sound. It happens here; the recording "
-                 + "is not sent anywhere.")
+                 + "is not sent anywhere.\n\n"
+                 + "Use your own voice, or one you have permission to use.")
                 .font(.footnote).foregroundStyle(Palette.inkMuted)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)

@@ -81,7 +81,7 @@ struct SettingsView: View {
                     Text(store.canWrite
                          ? "Mimic's own model writes something to say when you ask it to. "
                          + "Removing it falls back to Apple's, where there is one."
-                         : "A small language model, about 470 MB, that writes something to "
+                         : "A small language model, about 490 MB, that writes something to "
                          + "say. Optional — the passages and your own typing work without it.")
                 }
 
@@ -93,12 +93,13 @@ struct SettingsView: View {
                 Section("Made with") {
                     Credit(name: "Audio8 TTS 0.6B", role: "the voice",
                            licence: "Apache 2.0",
-                           url: "https://huggingface.co/Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4")
+                           url: "https://huggingface.co/Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4")
                     Credit(name: "Qwen2.5 0.5B Instruct", role: "the writing",
                            licence: "Apache 2.0",
                            url: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct")
                     Credit(name: "ONNX Runtime", role: "running them",
                            licence: "MIT", url: "https://onnxruntime.ai")
+                    NavigationLink("Licences") { LicencesView() }
                 }
 
                 Section {
@@ -170,5 +171,63 @@ private struct Credit: View {
                     .font(.caption).foregroundStyle(Palette.inkFaint)
             }
         }
+    }
+}
+
+/// The full text of every licence, for what is downloaded and what is built in.
+///
+/// The credits above say who; this is what Apache 2.0 and MIT ask to be
+/// carried along with the app.
+private struct LicencesView: View {
+    var body: some View {
+        List {
+            Section("Downloaded models") {
+                ForEach(Licence.models) { row($0) }
+            }
+            Section("In the app") {
+                ForEach(Licence.software) { row($0) }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Palette.background)
+        .navigationTitle("Licences")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func row(_ licence: Licence) -> some View {
+        NavigationLink {
+            LicenceText(licence: licence)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(licence.name)
+                Text("\(licence.role) · \(licence.kind)")
+                    .font(.caption).foregroundStyle(Palette.inkMuted)
+            }
+        }
+        .listRowBackground(Palette.card)
+    }
+}
+
+private struct LicenceText: View {
+    let licence: Licence
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(verbatim: licence.notice)
+                    .font(.footnote)
+                Text(verbatim: licence.terms)
+                    .font(.caption)
+            }
+            .foregroundStyle(Palette.ink)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+        }
+        .background(Palette.background)
+        .navigationTitle(licence.name)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

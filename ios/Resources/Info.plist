@@ -34,6 +34,6 @@
   <string>Mimic can save a passage as a video — a black picture with your voice on it — so it can be sent anywhere that takes video.</string>
   <!-- Shown when a voice is recorded. -->
   <key>NSMicrophoneUsageDescription</key>
-  <string>Mimic records you reading a short paragraph so it can learn your voice. The recording never leaves this phone.</string>
+  <string>Mimic records you reading a short paragraph so it can learn your voice. The recording stays on this phone unless you export the voice.</string>
 </dict>
 </plist>

@@ -43,7 +43,7 @@ final class Writer: ObservableObject {
             switch self {
             case .mimic:
                 return "Mimic's own model, on this phone. Smaller and plainer, "
-                     + "works with no signal, and never declines."
+                     + "and works with no signal."
             case .apple:
                 return "Apple's system model. Better written when it agrees to "
                      + "write, and it declines more than you would expect."
@@ -91,6 +91,15 @@ final class Writer: ObservableObject {
         Around eighty words unless more is asked for.
         """
 
+    /// What the downloaded model is told on top of the brief. Apple's model
+    /// has guardrails of its own; this one has only what it is told here and
+    /// the check in `ContentCheck` afterwards.
+    static let localBrief = brief + "\n\n" + """
+        Keep it short, clean and family-friendly: no swearing, no slurs, and \
+        nothing sexual, violent or hateful. If you are asked for something \
+        that is not, write something harmless on the same subject instead.
+        """
+
     /// Apple's model only. `Readiness` above is about the app as a whole.
     enum AppleReadiness {
         case ready
@@ -124,8 +133,8 @@ final class Writer: ObservableObject {
 
     /// Write with Apple's model.
     ///
-    /// Returns nil when it declines or fails, having set `problem` — the caller
-    /// can then offer the downloaded model instead, which does not refuse.
+    /// Returns nil when it declines or fails, or when what it wrote does not
+    /// pass `ContentCheck`, having set `problem`.
     func writeWithSystemModel(_ instruction: String) async -> String? {
         problem = nil
         #if canImport(FoundationModels)
@@ -152,7 +161,12 @@ final class Writer: ObservableObject {
                 problem = "The system model would not write that one."
                 return nil
             }
-            return Prose.spoken(text)
+            let spoken = Prose.spoken(text)
+            guard ContentCheck.isClean(spoken) else {
+                problem = ContentCheck.rejection
+                return nil
+            }
+            return spoken
         } catch {
             problem = error.localizedDescription
             return nil
@@ -164,20 +178,75 @@ final class Writer: ObservableObject {
 
     /// Write with the model this app downloaded.
     ///
-    /// It is smaller and less able than Apple's, and it never refuses — which
-    /// on balance is what this is for.
+    /// It is smaller and less able than Apple's. It is asked for something
+    /// clean, and what it writes is checked before anyone hears it.
     func writeLocally(_ instruction: String,
                       using store: Store) async -> String? {
         problem = nil
         isWriting = true
         defer { isWriting = false }
         do {
-            let text = try await store.write(Prose.asked(instruction), system: Writer.brief)
+            let text = try await store.write(Prose.asked(instruction), system: Writer.localBrief)
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : Prose.spoken(trimmed)
+            guard !trimmed.isEmpty else { return nil }
+            // Told to keep it clean, a small model sometimes declines outright
+            // instead, and a refusal read aloud in your own voice is no better
+            // from this one than from Apple's.
+            guard !Prose.isRefusal(trimmed) else {
+                problem = "Mimic's writer would not write that one. Try asking for something else."
+                return nil
+            }
+            let spoken = Prose.spoken(trimmed)
+            guard ContentCheck.isClean(spoken) else {
+                problem = ContentCheck.rejection
+                return nil
+            }
+            return spoken
         } catch {
             problem = error.localizedDescription
             return nil
+        }
+    }
+}
+
+/// A last look at what a writer produced, before it reaches the text box.
+///
+/// Basic by design: whole words against a short list, so "Scunthorpe" and
+/// "assess" pass. The instructions do most of the work; this catches what gets
+/// past them. Nothing is sent anywhere to decide.
+enum ContentCheck {
+
+    static let rejection = "That one came back with words Mimic will not read out. "
+                         + "Try asking for something else."
+
+    /// Clearly offensive words and slurs, matched as whole words. Only words
+    /// with no everyday innocent meaning are here, so a passage about a
+    /// donkey, a rooster or a cat is not caught by accident.
+    static let offensiveWords: Set<String> = [
+        // Swearing and crude
+        "shit", "shits", "shitty", "shitting", "shithead", "bullshit",
+        "horseshit", "dipshit", "cunt", "cunts", "asshole", "assholes",
+        "arsehole", "arseholes", "bitch", "bitches", "bitchy", "bastard",
+        "bastards", "twat", "twats", "wanker", "wankers", "dickhead",
+        "dickheads", "cocksucker", "cocksuckers", "whore", "whores", "slut",
+        "sluts", "slutty", "porn", "porno",
+        // Slurs
+        "nigger", "niggers", "nigga", "niggas", "kike", "kikes", "spic",
+        "spics", "wetback", "wetbacks", "gook", "gooks", "faggot", "faggots",
+        "tranny", "trannies", "retard", "retards", "retarded", "paki", "pakis",
+        "raghead", "ragheads", "towelhead", "towelheads", "beaner", "beaners",
+    ]
+
+    /// Matched anywhere inside a word, because no ordinary word contains them.
+    static let offensiveFragments = ["fuck"]
+
+    static func isClean(_ text: String) -> Bool {
+        let words = Prose.flattenedQuotes(text).lowercased()
+            .folding(options: .diacriticInsensitive, locale: nil)
+            .split(whereSeparator: { !$0.isLetter })
+        return !words.contains { word in
+            offensiveWords.contains(String(word))
+                || offensiveFragments.contains { word.contains($0) }
         }
     }
 }

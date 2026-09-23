@@ -37,9 +37,9 @@ public struct Preset: Identifiable, Sendable {
         Preset(label: "Dickens", source: "A Tale of Two Cities, 1859",
                text: "It was the best of times, it was the worst of times. It was "
                    + "the age of wisdom, it was the age of foolishness."),
-        Preset(label: "Voicemail", source: "for testing on somebody",
-               text: "Hi, it's me. I can't come to the phone right now, because "
-                   + "I am not actually the one saying this. Leave a message and "
-                   + "I'll think about it."),
+        Preset(label: "Jabberwocky", source: "Lewis Carroll, 1871",
+               text: "'Twas brillig, and the slithy toves did gyre and gimble in "
+                   + "the wabe: all mimsy were the borogoves, and the mome raths "
+                   + "outgrabe."),
     ]
 }

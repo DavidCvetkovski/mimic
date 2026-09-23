@@ -10,7 +10,7 @@ Audio8 TTS — ONNX Runtime reference implementation
 
 Files under core/vendor/arktts/ are copied unmodified from:
 
-    https://github.com/Audio8-AI/Audio8_TTS
+    https://github.com/Edge0-AI/Audio8_TTS
     onnx_runtime/arktts_runtime/
     commit 421f71559848572431bd6229af3e1a73f25986a7
 
@@ -32,13 +32,14 @@ Model weights
 No model weights are distributed in this repository. On first run Mimic
 downloads:
 
-    Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4
+    Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4
 
 from Hugging Face, published under the Apache License, Version 2.0.
 
-Note that the PyTorch base models in the same family (Audio8-TTS-Preview-0.1b
-and -0.6b) are released under the Audio8 Community License, which is a
-different and more restrictive licence. Mimic uses the ONNX release only.
+Its base model, the PyTorch Audio8-TTS-Preview-0.6b, is also published under
+the Apache License, Version 2.0. The smaller Audio8-TTS-Preview-0.1b is
+released under the Audio8 Community License, which is a different and more
+restrictive licence. Mimic uses the ONNX release only.
 
 On request — never automatically — the iPhone app also downloads:
 

@@ -34,7 +34,7 @@ struct Welcome: View {
                 .padding(.top, 52)
                 .modifier(Rise(shown: shown, delay: 0.34, reduced: reduceMotion))
 
-            Text("Fifteen seconds of you reading aloud.\nNothing ever leaves the phone.")
+            Text("Fifteen seconds of you reading aloud.\nNothing is uploaded.")
                 .font(.system(size: 16))
                 .lineSpacing(3)
                 .foregroundStyle(Palette.inkMuted)
@@ -46,9 +46,18 @@ struct Welcome: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 Rectangle().fill(Palette.rule).frame(height: 1)
-                Text("About 600 MB, once. Best on Wi‑Fi.")
+                // Both parts, not only the first: the cloning encoder comes
+                // down when the first voice is saved, and a first voice is
+                // the reason anyone is here.
+                Text("About 1 GB: 600 MB now, 400 MB when you save your first voice. Best on Wi‑Fi.")
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.inkFaint)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let problem = store.spaceProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(Palette.blood)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Button { Task { await store.download() } } label: {
                     Text("Get the model").frame(maxWidth: .infinity)
                 }

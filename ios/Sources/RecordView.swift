@@ -20,6 +20,9 @@ struct RecordView: View {
     @State private var player: AVAudioPlayer?
     @State private var captureTask: Task<Void, Never>?
     @State private var requestingAccess = false
+    /// Asked every time, before anything is recorded — not once at install,
+    /// because the question is about this voice, not about the person.
+    @State private var consented = false
 
     static let script = """
         My name is — and this is my voice. I am reading a short paragraph so it \
@@ -40,6 +43,10 @@ struct RecordView: View {
                         .background(Palette.card)
                         .overlay(Rectangle().frame(width: 2)
                             .foregroundStyle(Palette.blood), alignment: .leading)
+
+                    Toggle(VoiceConsent.statement, isOn: $consented)
+                        .toggleStyle(Checkbox())
+                        .disabled(recorder.isRecording || saving)
 
                     recordRow
 
@@ -117,7 +124,8 @@ struct RecordView: View {
             }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
-                .disabled(saving || requestingAccess)
+                // Stop is never held back; starting is, until the box is ticked.
+                .disabled(saving || requestingAccess || !(consented || recorder.isRecording))
 
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
@@ -140,7 +148,7 @@ struct RecordView: View {
 
     /// Everything that has to be true before there is a voice to save.
     private var canSave: Bool {
-        recorder.hasRecording && !recorder.isRecording && !saving
+        consented && recorder.hasRecording && !recorder.isRecording && !saving
             && recorder.seconds >= Recorder.shortest
             && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -204,5 +212,31 @@ struct RecordView: View {
         } catch {
             problem = error.localizedDescription
         }
+    }
+}
+
+/// A box to tick rather than a switch: this is a statement being agreed to,
+/// not a setting being changed.
+private struct Checkbox: ToggleStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: configuration.isOn ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(configuration.isOn ? Palette.blood : Palette.inkMuted)
+                    .accessibilityHidden(true)
+                configuration.label
+                    .font(.footnote)
+                    .foregroundStyle(Palette.ink)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? 1 : 0.5)
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(configuration.isOn ? "Ticked" : "Not ticked")
     }
 }

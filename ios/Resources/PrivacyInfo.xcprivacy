@@ -36,6 +36,14 @@
       <key>NSPrivacyAccessedAPITypeReasons</key>
       <array><string>35F9.1</string></array>
     </dict>
+    <!-- Free space is read before a download starts. Too little, and the
+         download does not start; the message gives the numbers. -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array><string>E174.1</string><string>85F4.1</string></array>
+    </dict>
   </array>
 </dict>
 </plist>

@@ -27,6 +27,8 @@ Speech generation stays on your device — including iPhone, where the engine
 is implemented in Swift and works in aeroplane mode. Optional encrypted voice
 sync can back up voice profiles and reference recordings through Vercel. It stays
 off until you pair a device. See [cloud setup and privacy](cloud/README.md).
+Sync is switched off in the App Store iPhone app, which has no accounts and
+uploads nothing.
 
 ## What it is
 
@@ -115,18 +117,20 @@ and AirDrop all work without the app knowing about any of them.
 
 Most people open a text-to-speech app with nothing prepared, and a blank box is
 a bad first impression. The iPhone app opens with six passages to tap — Hamlet,
-Armstrong on the moon, Austen, Poe, Dickens — and a **Write me one** button that
-asks a language model for whatever you describe: a birthday toast, a limerick
-about a late cat.
+Armstrong on the moon, Austen, Poe, Dickens, Carroll — and a **Write me one**
+button that asks a language model for whatever you describe: a birthday toast,
+a limerick about a late cat.
 
 There are two, and which one answers depends on the phone. Apple's ships with
 the system, so it costs nothing and downloads nothing — but it only exists on
 recent hardware with Apple Intelligence switched on, and it declines more than
 you would expect; asked for a poem it will sometimes reply that it cannot help
 with anything creative. So the app carries its own: **Qwen2.5-0.5B-Instruct**,
-INT4, about 470 MB, fetched only when somebody taps the button and offered
-again the first time Apple's model says no. It is smaller and less able, and it
-does not refuse.
+INT4, about 490 MB, fetched only when somebody taps the button and offered
+again the first time Apple's model says no. It is smaller and less able. It is
+told to keep things short, clean and family-friendly, and whatever either model
+writes is checked against a short list of offensive words before it reaches the
+text box.
 
 Either way the prompt never leaves the phone, which is the same promise the
 rest of this makes — and with the local one, writing works in aeroplane mode
@@ -311,12 +315,14 @@ Mimic is MIT — see [LICENSE](LICENSE).
 It vendors Audio8's ONNX reference implementation under Apache 2.0, and
 downloads Apache 2.0 weights — Audio8's for speech at first run, and an ONNX
 export of Alibaba's Qwen2.5-0.5B-Instruct for writing, only if asked. No
-weights are distributed here, and neither are the PyTorch base models, which
-carry a different and revenue-capped licence. See [NOTICE](NOTICE).
+weights are distributed here. The 0.1b PyTorch base model, which carries a
+different and revenue-capped licence, is not used at all. See [NOTICE](NOTICE).
+The iPhone app shows the full licence texts under About › Licences.
 
 Everything it needs is permissively licensed on purpose. Several of the models
 usually recommended for zero-shot voice cloning — F5-TTS, Spark-TTS, XTTS-v2 —
 are non-commercial, and would quietly foreclose ever publishing this.
 
 **On cloning voices.** This is for your own voice, or one you have permission
-to use.
+to use. The iPhone app asks you to confirm that before it records a voice or
+imports one.

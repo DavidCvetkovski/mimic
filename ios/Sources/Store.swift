@@ -111,12 +111,23 @@ final class Store: ObservableObject {
     /// How far the writer's download has got, when one is running.
     @Published private(set) var writerFraction: Double?
 
+    /// Why the first download did not start, shown under its button.
+    @Published private(set) var spaceProblem: String?
+
     // MARK: - Starting up
 
     func start() async {
         guard stage == .checking else { return }
         try? FileManager.default.createDirectory(at: voicesDirectory,
                                                  withIntermediateDirectories: true)
+        // Both can be had again, so neither belongs in a backup. Applied on
+        // every launch because installs from before 1.0 (6) made the folders
+        // without it.
+        for folder in [modelDirectory, cacheDirectory] {
+            try? FileManager.default.createDirectory(at: folder,
+                                                     withIntermediateDirectories: true)
+            ModelDownload.keepOutOfBackups(folder)
+        }
         guard ModelDownload.isComplete(at: modelDirectory) else {
             stage = .needsModel
             return
@@ -126,15 +137,77 @@ final class Store: ObservableObject {
 
     func download(_ files: [ModelDownload.File] = ModelDownload.speaking,
                   note: String = "") async {
+        do {
+            try ModelDownload.checkSpace(for: files, in: modelDirectory)
+        } catch {
+            // Nothing has started, so there is nothing to resume. From the
+            // first screen, say it under the button that was just pressed.
+            if stage == .needsModel {
+                spaceProblem = error.localizedDescription
+            } else {
+                stage = .failed(error.localizedDescription)
+            }
+            return
+        }
+        spaceProblem = nil
         stage = .downloading(fraction: 0, note: note)
         do {
-            for try await fraction in ModelDownload.run(into: modelDirectory, files: files) {
-                stage = .downloading(fraction: fraction, note: note)
-            }
+            try await fetch(files) { self.stage = .downloading(fraction: $0, note: note) }
             await load()
         } catch {
             stage = .failed(error.localizedDescription)
         }
+    }
+
+    // MARK: - While downloading
+
+    /// Every download goes through here: the model, the cloning encoder and
+    /// the writer.
+    ///
+    /// They run in the foreground, and a phone that locks halfway stops them.
+    /// So the screen stays on while one runs, a short trip out of the app gets
+    /// the half-minute iOS allows to finish what is in flight, and both go
+    /// back to how they were when the last one ends, however it ended.
+    private func fetch(_ files: [ModelDownload.File],
+                       progress: (Double) -> Void) async throws {
+        try ModelDownload.checkSpace(for: files, in: modelDirectory)
+        downloadBegan()
+        defer { downloadEnded() }
+        for try await fraction in ModelDownload.run(into: modelDirectory, files: files) {
+            progress(fraction)
+        }
+    }
+
+    /// More than one can run at once: the writer carries on after its sheet
+    /// is closed, and a voice can be saved meanwhile.
+    private var downloadsRunning = 0
+    private var screenWasKeptOn = false
+    private var backgroundGrace: UIBackgroundTaskIdentifier = .invalid
+
+    private func downloadBegan() {
+        downloadsRunning += 1
+        guard downloadsRunning == 1 else { return }
+        screenWasKeptOn = UIApplication.shared.isIdleTimerDisabled
+        UIApplication.shared.isIdleTimerDisabled = true
+        // When the half-minute is up the connection goes with the app, and
+        // ModelDownload tries the file again once the app is back.
+        backgroundGrace = UIApplication.shared.beginBackgroundTask(withName: "Download") {
+            [weak self] in
+            MainActor.assumeIsolated { self?.endBackgroundGrace() }
+        }
+    }
+
+    private func downloadEnded() {
+        downloadsRunning = max(downloadsRunning - 1, 0)
+        guard downloadsRunning == 0 else { return }
+        UIApplication.shared.isIdleTimerDisabled = screenWasKeptOn
+        endBackgroundGrace()
+    }
+
+    private func endBackgroundGrace() {
+        guard backgroundGrace != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundGrace)
+        backgroundGrace = .invalid
     }
 
     /// What to do after a failure, which is not always "load it again".
@@ -407,9 +480,8 @@ final class Store: ObservableObject {
         busy = "Getting the cloning model…"
         if !canRecord {
             do {
-                for try await fraction in ModelDownload.run(into: modelDirectory,
-                                                            files: ModelDownload.recording) {
-                    busy = "Getting the cloning model… \(Int(fraction * 100))%"
+                try await fetch(ModelDownload.recording) {
+                    self.busy = "Getting the cloning model… \(Int($0 * 100))%"
                 }
             } catch {
                 busy = nil
@@ -545,12 +617,10 @@ final class Store: ObservableObject {
     /// Fetch the writing model, on request and never otherwise.
     func downloadWriter() async throws {
         guard writerFraction == nil else { return }
+        try ModelDownload.checkSpace(for: ModelDownload.writing, in: modelDirectory)
         writerFraction = 0
         defer { writerFraction = nil }
-        for try await fraction in ModelDownload.run(into: modelDirectory,
-                                                    files: ModelDownload.writing) {
-            writerFraction = fraction
-        }
+        try await fetch(ModelDownload.writing) { self.writerFraction = $0 }
     }
 
     /// Write something, with the model that is on this phone.

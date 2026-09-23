@@ -6,7 +6,7 @@ import SwiftUI
 /// This was an alert, which cannot hold a picker — so once there were two
 /// models worth choosing between it had to become a sheet. The choice is worth
 /// offering: Apple's is better written when it agrees to write at all, and the
-/// downloaded one always agrees.
+/// downloaded one works on any phone, with no signal.
 struct WriteSheet: View {
     @EnvironmentObject private var store: Store
     @ObservedObject var writer: Writer
@@ -80,8 +80,8 @@ struct WriteSheet: View {
                                 .font(.subheadline)
                         }
                         .disabled(downloading || store.writerFraction != nil)
-                        Text("A small language model, about 470 MB, kept on this phone. "
-                             + "It works with no signal, and it does not decline.")
+                        Text("A small language model, about 490 MB, kept on this phone. "
+                             + "It writes short, clean passages and works with no signal.")
                             .font(.caption2).foregroundStyle(Palette.inkFaint)
                             .fixedSize(horizontal: false, vertical: true)
                     }
